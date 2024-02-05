@@ -1,7 +1,7 @@
 {
 	"id": "folders2graph",
 	"name": "Folders to Graph",
-	"description": "Display your folder structure into your Obsidian graphs.",
+	"description": "Display your vault folder structure into your graphs.",
 	"version": "1.0.0",
 	"author": "ratibus11",
 	"authorUrl": "https://github.com/ratibus11",
