@@ -1,0 +1,33 @@
+{
+	"compilerOptions": {
+		"strict": true,
+
+		"target": "ESNext",
+		"module": "NodeNext",
+
+		"baseUrl": "src",
+		"rootDir": ".",
+		"moduleResolution": "NodeNext",
+
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+
+		"strictNullChecks": true,
+
+		"allowArbitraryExtensions": false,
+		"allowImportingTsExtensions": false,
+		"allowJs": false,
+		"allowUmdGlobalAccess": false,
+		"allowUnreachableCode": false,
+		"allowUnusedLabels": false,
+
+		"noImplicitAny": true,
+		"noErrorTruncation": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noImplicitThis": true,
+		"noFallthroughCasesInSwitch": true,
+		"noPropertyAccessFromIndexSignature": false
+	},
+	"exclude": ["node_modules"]
+}
