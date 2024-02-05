@@ -31,7 +31,10 @@ Nothing more easier:
 
 ## :keyboard: Roadmap
 
+(Let's check if it's possible)
+
 -   Allow to enable/disable the extension independently of each graph.
+-   Create custom nodes to recognize folders nodes independently from the others.
 
 > Inspired on drPilman's [`obsidian-graph-nested-tags`](https://github.com/drPilman/obsidian-graph-nested-tags) obsidian
 > plugin. Check this out.
