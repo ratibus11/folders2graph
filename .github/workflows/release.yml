@@ -1,0 +1,52 @@
+name: Github release
+
+on:
+    push:
+        branches:
+            - master
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        name: Build and release
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v2
+            - name: Setup Nodejs
+              uses: actions/setup-node@v3
+              with:
+                  node-version: 20
+            - name: NPM Install
+              run: npm i
+            - name: Production build
+              run: npm run build
+            - name: Release
+              id: create_release
+              uses: actions/create-release@v1
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  tag_name: ${{ github.event.head_commit.message }}
+                  release_name: v${{ github.event.head_commit.message }}
+                  body: |
+                      <!--- RELEASE DRAFT FOR RELASE FROM ${{ github.event.head_commit.message }}
+
+                      Checklist:
+                      - The release version is correct:
+                        - Release tag,
+                        - Release name,
+                        - Build add name,
+                      - The asset ZIP file contains at least and only `manifest.json`, `README.md` and `main.js` files. -->
+
+                      # CHANGELOG - v${{ github.event.head_commit.message }}
+
+                      - ...
+                  draft: true
+                  prerelease: false
+            - name: Release assets
+              uses: dwenegar/upload-release-assets@v1
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  release_id: ${{ steps.create_release.outputs.id }}
+                  assets_path: build

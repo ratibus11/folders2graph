@@ -1,0 +1,9 @@
+{
+	"files.exclude": {
+		"node_modules": true,
+		"package-lock.json": true,
+		"build": true
+	},
+	"sonarlint.analysisExcludesStandalone": "node_modules/**,build/**",
+	"typescript.tsserver.experimental.enableProjectDiagnostics": true
+}

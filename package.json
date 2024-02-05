@@ -1,0 +1,29 @@
+{
+	"name": "folders2graph",
+	"displayName": "Folders 2 Graph",
+	"description": "Display your Obsidian vault folder structure into your graphs.",
+	"version": "0.0.1",
+	"author": {
+		"name": "Lucas Bastian",
+		"email": "ratibus11@icloud.com",
+		"url": "https://github.com/ratibus11"
+	},
+	"devDependencies": {
+		"@types/node": "^20.11.16",
+		"copy-webpack-plugin": "^12.0.2",
+		"dotenv": "^16.4.1",
+		"nodemon": "^3.0.3",
+		"obsidian": "^1.4.11",
+		"ts-loader": "^9.5.1",
+		"ts-node": "^10.9.2",
+		"uglify-js": "^3.17.4",
+		"webpack": "^5.90.1",
+		"webpack-cli": "^5.1.4"
+	},
+	"scripts": {
+		"dev": "nodemon --watch src/** --ext ts --exec \"npm run build:dev && ts-node config/tasks/moveToObsidian.ts\"",
+		"build": "npm run build:prod",
+		"build:dev": "webpack --node-env development --config config/webpack/webpack.ts",
+		"build:prod": "webpack --node-env production --config config/webpack/webpack.ts"
+	}
+}
