@@ -2,7 +2,8 @@
 
 > Combine your folder structure into your graphs :magic_wand:
 
-This following is an [Obsidian](https://obsidian.md) plugin allowing you to add your folder structure into your graphs.
+This following is an [Obsidian](https://obsidian.md) plugin which allows you to display your vault folder structure into
+your graphs.
 
 ![](./media/readme_thumbnail.png)
 
