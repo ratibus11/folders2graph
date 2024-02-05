@@ -1,7 +1,7 @@
 {
 	"name": "folders2graph",
 	"displayName": "Folders 2 Graph",
-	"description": "Turn your folder structure into a graph",
+	"description": "Display your folder structure into your Obsidian graphs.",
 	"version": "0.0.1",
 	"author": {
 		"name": "Lucas Bastian",
