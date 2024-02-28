@@ -19,7 +19,7 @@ Nothing more easier:
 -   Go on Obsidian, then click on the `Settings` button on the left-bottom corner,
 -   Go to `Community plugins` tab,
     -   If needed, enable them by clicking on `Turn on community plugins`,
--   Click on `Browse`, then search `folders2graph`,
+-   Click on `Browse`, then search `Folders to Graph`,
 -   Download the plugin, then enable it :magic_wand:
 
 ### :package: Want to install it manually?
