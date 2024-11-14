@@ -1,6 +1,6 @@
 import { GraphNode } from "./GraphNode";
 
-export interface RendererData {
+export type RendererData = {
 	numLinks: number;
 	nodes: Record<string, GraphNode>;
-}
+};
