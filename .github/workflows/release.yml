@@ -15,7 +15,7 @@ jobs:
             - name: Extract commit description
               id: extract_description
               run: |
-                  COMMIT_MESSAGE=$(<<'EOF'
+                  COMMIT_MESSAGE=$(cat << 'EOF'
                   ${{ github.event.head_commit.message }}
                   EOF
                   )
