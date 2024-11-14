@@ -51,7 +51,7 @@ jobs:
                         - The versions manifest (`versions.json`) has been updated.
                       - The asset ZIP file contains at least and only `manifest.json`, `README.md` and `main.js` files. -->
 
-                      # CHANGELOG - ${{ github.event.head_commit.message }}
+                      # CHANGELOG - ${{ steps.extract_description.outputs.title }}
 
                       ${{ steps.extract_description.outputs.description }}
                   draft: true
