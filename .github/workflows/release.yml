@@ -15,14 +15,18 @@ jobs:
             - name: Extract commit description
               id: extract_description
               run: |
-                  COMMIT_MESSAGE=$(cat << 'EOF'
+                  COMMIT_MESSAGE=$(cat << "EOF"
                   ${{ github.event.head_commit.message }}
                   EOF
                   )
+
                   TITLE=$(echo "$COMMIT_MESSAGE" | head -n 1)
-                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '3,$p')
                   echo "title=$TITLE" >> $GITHUB_OUTPUT
-                  echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
+
+                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '3,$p')
+                  echo "description<<EOF" >> $GITHUB_OUTPUT
+                  echo $DESCRIPTION >> $GITHUB_OUTPUT
+                  echo "EOF" >> $GITHUB_OUTPUT
             - name: Setup Nodejs
               uses: actions/setup-node@v3
               with:
