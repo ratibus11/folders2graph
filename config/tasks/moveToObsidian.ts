@@ -4,9 +4,12 @@ import { resolve } from "path";
 import * as paths from "../paths";
 import { cpSync, mkdirSync, readFileSync } from "fs";
 import { doesUrlExists, doesUrlIsDirectory, doesUrlIsFile } from "./utils/path";
+import { fileURLToPath, pathToFileURL } from "url";
+
+const envFileName = ".env.test";
 
 function initEnv() {
-	dotenv.config({ path: resolve(paths.CONFIG, ".env/.env.test") });
+	dotenv.config({ path: resolve(paths.CONFIG, ".env", envFileName) });
 }
 
 function getVaultUrl(): URL {
@@ -14,16 +17,16 @@ function getVaultUrl(): URL {
 	const vaultPathString = process.env[vaultPathEnvKey];
 
 	if (!vaultPathString) {
-		throw new Error(`.env value from key ${vaultPathEnvKey} is not defined.`);
+		throw new Error(`${envFileName} value from key ${vaultPathEnvKey} is not defined.`);
 	}
 
-	const vaultUrl = new URL(vaultPathString);
+	const vaultUrl = pathToFileURL(vaultPathString);
 
 	if (!doesUrlExists(vaultUrl)) {
-		throw new Error(`.env value from key ${vaultPathEnvKey} at '${vaultPathString}' does not exist.`);
+		throw new Error(`${envFileName} value from key ${vaultPathEnvKey} at '${vaultPathString}' does not exist.`);
 	}
 	if (!doesUrlIsDirectory(vaultUrl)) {
-		throw new Error(`.env value from key ${vaultPathEnvKey} at '${vaultPathString}' is not a directory.`);
+		throw new Error(`${envFileName} value from key ${vaultPathEnvKey} at '${vaultPathString}' is not a directory.`);
 	}
 
 	return vaultUrl;
@@ -31,7 +34,7 @@ function getVaultUrl(): URL {
 
 function getBuildPath(): URL {
 	const buildPathString = paths.BUILD;
-	const buildPath = new URL(buildPathString);
+	const buildPath = pathToFileURL(buildPathString);
 
 	if (!doesUrlExists(buildPath)) {
 		throw new Error(`Build path at '${buildPathString}' does not exist.`);
@@ -45,7 +48,7 @@ function getBuildPath(): URL {
 
 function getPluginName(): string {
 	const manifestPathString = resolve(paths.ROOT, "manifest.json");
-	const manifestPath = new URL(manifestPathString);
+	const manifestPath = pathToFileURL(manifestPathString);
 
 	if (!doesUrlExists(manifestPath)) {
 		throw new Error(`Plugin manifest path at '${manifestPathString}' does not exist.`);
@@ -58,7 +61,7 @@ function getPluginName(): string {
 	let parsedManifest: any;
 
 	try {
-		rawManifest = readFileSync(manifestPath.toString(), "utf-8");
+		rawManifest = readFileSync(fileURLToPath(manifestPath), "utf-8");
 	} catch (e) {
 		throw new Error(`Could not read plugin manifest file at '${manifestPathString}': ${e}`);
 	}
@@ -96,7 +99,7 @@ function main() {
 		throw new Error(`Vault path at '${vaultUrl}' is not a directory.`);
 	}
 
-	const vaultDotObsidianFolderUrl = new URL(resolve(vaultUrl.toString(), ".obsidian"));
+	const vaultDotObsidianFolderUrl = pathToFileURL(resolve(fileURLToPath(vaultUrl), ".obsidian"));
 	if (!doesUrlExists(vaultDotObsidianFolderUrl)) {
 		console.log(`Creating .obsidian directory in vault at '${vaultDotObsidianFolderUrl}'.`);
 		mkdirSync(vaultDotObsidianFolderUrl);
@@ -105,14 +108,14 @@ function main() {
 		throw new Error(`.obsidian path at '${vaultDotObsidianFolderUrl}' is not a directory.`);
 	}
 
-	const vaultPluginsFolderUrl = new URL(resolve(vaultDotObsidianFolderUrl.toString(), "plugins"));
+	const vaultPluginsFolderUrl = pathToFileURL(resolve(fileURLToPath(vaultDotObsidianFolderUrl), "plugins"));
 	if (!doesUrlExists(vaultPluginsFolderUrl)) {
 		console.log(`Creating plugins directory in vault at '${vaultPluginsFolderUrl}'.`);
 		mkdirSync(vaultPluginsFolderUrl);
 	}
 
-	const pluginFolderUrl = new URL(resolve(vaultPluginsFolderUrl.toString(), pluginName));
-	cpSync(buildPath.toString(), pluginFolderUrl.toString(), { recursive: true, force: true });
+	const pluginFolderUrl = pathToFileURL(resolve(fileURLToPath(vaultPluginsFolderUrl), pluginName));
+	cpSync(fileURLToPath(buildPath), fileURLToPath(pluginFolderUrl), { recursive: true, force: true });
 }
 
 main();

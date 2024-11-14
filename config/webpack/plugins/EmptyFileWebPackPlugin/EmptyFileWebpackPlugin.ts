@@ -3,6 +3,7 @@ import { EmptyFileWebpackPluginOptions } from "./EmptyFileWebpackPluginOptions";
 import { join, resolve } from "path";
 import { writeFileSync } from "fs";
 import { doesUrlExists, doesUrlIsDirectory } from "../../../tasks/utils/path";
+import { fileURLToPath, pathToFileURL } from "url";
 
 export class EmptyFileWebpackPlugin {
 	private options: EmptyFileWebpackPluginOptions;
@@ -14,7 +15,7 @@ export class EmptyFileWebpackPlugin {
 	apply(compiler: Compiler) {
 		compiler.hooks.afterEmit.tap("EmptyFileWebpackPlugin", (compilation) => {
 			const outputPath = compiler.options.output.path ?? process.cwd();
-			const filePath = new URL(join(outputPath, this.options.path));
+			const filePath = pathToFileURL(join(outputPath, this.options.path));
 
 			if (doesUrlExists(filePath)) {
 				if (this.options.overwrite) {
@@ -23,7 +24,7 @@ export class EmptyFileWebpackPlugin {
 				return;
 			}
 
-			const folderPath = new URL(resolve(filePath.toString(), ".."));
+			const folderPath = pathToFileURL(resolve(fileURLToPath(filePath), ".."));
 			if (!doesUrlExists(folderPath)) {
 				throw new Error(`Folder path at '${folderPath}' does not exist.`);
 			}
@@ -31,7 +32,7 @@ export class EmptyFileWebpackPlugin {
 				throw new Error(`Folder path at '${folderPath}' is not a directory.`);
 			}
 
-			writeFileSync(filePath.toString(), "");
+			writeFileSync(fileURLToPath(filePath), "");
 		});
 	}
 }

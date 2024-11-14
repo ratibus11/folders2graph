@@ -1,4 +1,4 @@
-export interface LeafRenderer {
+export type LeafRenderer = {
 	setData: Function;
 	originalSetData?: Function;
-}
+};

@@ -37,6 +37,7 @@ const configuration: Configuration = {
 		],
 	},
 	resolve: {
+		preferRelative: true,
 		modules: [paths.ROOT, "node_modules"],
 		extensions: [".ts", ".js"],
 	},

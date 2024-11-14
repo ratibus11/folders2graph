@@ -8,3 +8,6 @@ build
 # .env
 config/.env/.env*
 !config/.env/*.example
+
+# Extensions
+.history

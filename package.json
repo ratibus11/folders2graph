@@ -21,7 +21,7 @@
 		"webpack-cli": "^5.1.4"
 	},
 	"scripts": {
-		"dev": "nodemon --watch src/** --ext ts --exec \"npm run build:dev && ts-node config/tasks/moveToObsidian.ts\"",
+		"dev": "nodemon --watch src --ext ts --exec \"npm run build:dev && ts-node config/tasks/moveToObsidian.ts\"",
 		"build": "npm run build:prod",
 		"build:dev": "webpack --node-env development --config config/webpack/webpack.ts",
 		"build:prod": "webpack --node-env production --config config/webpack/webpack.ts"

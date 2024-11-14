@@ -1,7 +1,8 @@
 import { existsSync, statSync } from "fs";
+import { fileURLToPath } from "url";
 
 export function doesUrlExists(url: URL): boolean {
-	return existsSync(url.toString());
+	return existsSync(fileURLToPath(url));
 }
 
 export function doesUrlIsFile(url: URL, throwOnError: boolean = true): boolean {
@@ -10,7 +11,7 @@ export function doesUrlIsFile(url: URL, throwOnError: boolean = true): boolean {
 		return false;
 	}
 
-	return statSync(url.toString()).isFile();
+	return statSync(fileURLToPath(url)).isFile();
 }
 
 export function doesUrlIsDirectory(url: URL): boolean {
@@ -19,5 +20,5 @@ export function doesUrlIsDirectory(url: URL): boolean {
 		return false;
 	}
 
-	return statSync(url.toString()).isDirectory();
+	return statSync(fileURLToPath(url)).isDirectory();
 }
