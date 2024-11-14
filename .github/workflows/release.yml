@@ -15,9 +15,9 @@ jobs:
             - name: Extract commit description
               id: extract_description
               run: |
-                  COMMIT_MESSAGE=$(<<<END
+                  COMMIT_MESSAGE=$(<<'EOF'
                   ${{ github.event.head_commit.message }}
-                  END
+                  EOF
                   )
                   TITLE=$(echo "$COMMIT_MESSAGE" | head -n 1 | sed 's/"/\\"/g')
                   DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '2,$p' | sed 's/"/\\"/g')
