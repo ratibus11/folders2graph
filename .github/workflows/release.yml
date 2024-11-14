@@ -26,10 +26,10 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               with:
-                  tag_name: ${{ github.ref_name }}
-                  release_name: ${{ github.ref_name }}
+                  tag_name: ${{ github.event.head_commit.message }}
+                  release_name: ${{ github.event.head_commit.message }}
                   body: |
-                      <!--- RELEASE DRAFT FOR RELASE FROM ${{ github.ref_name }}
+                      <!--- RELEASE DRAFT FOR RELASE FROM ${{ github.event.head_commit.message }}
 
                       Checklist:
                       - The release version is correct:
@@ -40,7 +40,7 @@ jobs:
                         - The versions manifest (`versions.json`) has been updated.
                       - The asset ZIP file contains at least and only `manifest.json`, `README.md` and `main.js` files. -->
 
-                      # CHANGELOG - v${{ github.ref_name }}
+                      # CHANGELOG - ${{ github.event.head_commit.message }}
 
                       ${{ github.event.head_commit.message }}
                   draft: true
