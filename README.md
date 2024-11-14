@@ -34,7 +34,7 @@ Nothing more easier:
 ### 2024-11-14
 
 -   Add settings tab
--   Toggle display of the root folder node (`/`) (from #6)
+-   Toggle display of the root folder node (`/`) (from [#6](https://github.com/ratibus11/folders2graph/issues/6))
 
 ### 2024-02-05
 
