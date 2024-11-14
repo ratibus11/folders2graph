@@ -12,12 +12,6 @@ jobs:
         steps:
             - name: Checkout
               uses: actions/checkout@v2
-            - name: Extract commit description
-              id: extract_description
-              run: |
-                  COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
-                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '2,$p')
-                  echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
             - name: Setup Nodejs
               uses: actions/setup-node@v3
               with:
@@ -47,8 +41,6 @@ jobs:
                       - The asset ZIP file contains at least and only `manifest.json`, `README.md` and `main.js` files. -->
 
                       # CHANGELOG - ${{ github.event.head_commit.message }}
-
-                      ${{ steps.extract_description.outputs.description }}
                   draft: true
                   prerelease: false
             - name: Release assets
