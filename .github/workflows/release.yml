@@ -19,8 +19,8 @@ jobs:
                   ${{ github.event.head_commit.message }}
                   EOF
                   )
-                  TITLE=$(echo "$COMMIT_MESSAGE" | head -n 1 | sed 's/"/\\"/g')
-                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '2,$p' | sed 's/"/\\"/g')
+                  TITLE=$(echo "$COMMIT_MESSAGE" | head -n 1)
+                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '2,$p')
                   echo "title=$TITLE" >> $GITHUB_OUTPUT
                   echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
             - name: Setup Nodejs
