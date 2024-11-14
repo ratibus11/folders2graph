@@ -35,6 +35,7 @@ Nothing more easier:
 
 -   Add settings tab
 -   Toggle display of the root folder node (`/`) (from [#6](https://github.com/ratibus11/folders2graph/issues/6))
+-   Supports French and English. Feel free to suggest new translations!
 
 ### 2024-02-05
 
