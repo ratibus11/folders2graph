@@ -34,7 +34,7 @@ Nothing more easier:
 ### 2024-11-14
 
 -   Add settings tab
--   Toggle display of the root folder node (`/`)
+-   Toggle display of the root folder node (`/`) (from #6)
 
 ### 2024-02-05
 
