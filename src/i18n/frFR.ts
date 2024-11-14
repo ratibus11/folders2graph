@@ -4,7 +4,7 @@ export const frFR: I18n = {
 	settings: {
 		hideRootNode: {
 			name: "Cacher le nœu racine",
-			desc: "Afficher ou non le nœu du dossier racine ('/') dans la vue graphique.",
+			desc: "Cacher ou non le nœu du dossier racine ('/') dans la vue graphique. (affiché par défaut)",
 		},
 	},
 };

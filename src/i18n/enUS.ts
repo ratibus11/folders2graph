@@ -4,7 +4,7 @@ export const enUS: I18n = {
 	settings: {
 		hideRootNode: {
 			name: "Hide root node",
-			desc: "Either show or hide the root folder node ('/') in the graph view.",
+			desc: "Either hide or show the root folder node ('/') in the graph view. (displayed by default)",
 		},
 	},
 };
