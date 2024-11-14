@@ -12,6 +12,12 @@ jobs:
         steps:
             - name: Checkout
               uses: actions/checkout@v2
+            - name: Extract commit description
+              id: extract_description
+              run: |
+                  COMMIT_MESSAGE="${{ github.event.head_commit.message }}"
+                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '2,$p')
+                  echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
             - name: Setup Nodejs
               uses: actions/setup-node@v3
               with:
@@ -26,10 +32,10 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               with:
-                  tag_name: ${{ github.ref_name }}
-                  release_name: ${{ github.ref_name }}
+                  tag_name: ${{ github.event.head_commit.message }}
+                  release_name: ${{ github.event.head_commit.message }}
                   body: |
-                      <!--- RELEASE DRAFT FOR RELASE FROM ${{ github.ref_name }}
+                      <!--- RELEASE DRAFT FOR RELASE FROM ${{ github.event.head_commit.message }}
 
                       Checklist:
                       - The release version is correct:
@@ -40,9 +46,9 @@ jobs:
                         - The versions manifest (`versions.json`) has been updated.
                       - The asset ZIP file contains at least and only `manifest.json`, `README.md` and `main.js` files. -->
 
-                      # CHANGELOG - v${{ github.ref_name }}
+                      # CHANGELOG - ${{ github.event.head_commit.message }}
 
-                      ${{ github.event.head_commit.message }}
+                      ${{ steps.extract_description.outputs.description }}
                   draft: true
                   prerelease: false
             - name: Release assets
