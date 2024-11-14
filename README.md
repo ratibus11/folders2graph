@@ -29,12 +29,17 @@ Nothing more easier:
 -   Go to your vault plugins folder (eg. `/path/to/your/vault/.obsidian/plugin`),
 -   Finally, extract the downloaded zip content here,
 
-## Roadmap
+## Changelog
 
-(Let's check if it's possible)
+### 2024-11-14
 
--   Allow to enable/disable the extension independently of each graph.
--   Create custom nodes to recognize folders nodes independently from the others.
+-   Add settings tab
+-   Toggle display of the root folder node (`/`)
+
+### 2024-02-05
+
+-   Plugin first release.
+-   Allows to display your Obsidian vault folder structure into your graphs by enabling the extension.
 
 > Inspired on drPilman's [`obsidian-graph-nested-tags`](https://github.com/drPilman/obsidian-graph-nested-tags) obsidian
 > plugin. Check this out.
