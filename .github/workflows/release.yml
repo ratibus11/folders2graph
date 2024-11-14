@@ -20,7 +20,7 @@ jobs:
                   EOF
                   )
                   TITLE=$(echo "$COMMIT_MESSAGE" | head -n 1)
-                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '3,$p'| sed ':a;N;$!ba;s/\n/\\n/g')
+                  DESCRIPTION=$(echo "$COMMIT_MESSAGE" | sed -n '3,$p')
                   echo "title=$TITLE" >> $GITHUB_OUTPUT
                   echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
             - name: Setup Nodejs
