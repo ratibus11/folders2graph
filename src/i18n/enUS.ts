@@ -8,7 +8,7 @@ export const enUS: I18n = {
 		},
 		nodeColor: {
 			name: "Node color",
-			desc: "Color to display nodes in the graph view.",
+			desc: "Color to display nodes in the graph view. (defaulted to #5c8af5)",
 		},
 	},
 };

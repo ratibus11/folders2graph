@@ -8,7 +8,7 @@ export const frFR: I18n = {
 		},
 		nodeColor: {
 			name: "Couleur du nœud",
-			desc: "Couleur avec laquelle afficher les nœuds dans la vue graphique.",
+			desc: "Couleur avec laquelle afficher les nœuds dans la vue graphique. (par défaut à #5c8af5)",
 		},
 	},
 };
