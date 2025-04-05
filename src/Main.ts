@@ -7,11 +7,12 @@ import { Nullable } from "types/Nullable";
 import { Settings } from "interfaces/Settings";
 import { SettingsTab } from "SettingsTab";
 
-const FOLDER_NODE_TAG = "tag";
+const FOLDER_NODE_TAG = "f2g_node";
 
 export default class Folders2GraphPlugin extends Plugin {
 	public settings: Settings = {
 		hideRootNode: false,
+		nodeColor: "#5c8af5",
 	};
 
 	/**
@@ -21,9 +22,6 @@ export default class Folders2GraphPlugin extends Plugin {
 		// Load settings tab.
 		await this.__loadSettings();
 		this.addSettingTab(new SettingsTab(this.app, this));
-
-		// Iterates through all tabs which are of type "graph".
-		this.refreshGraphLeaves();
 
 		// When a leaf changes, refresh all graph leaves.
 		this.registerEvent(
@@ -37,6 +35,9 @@ export default class Folders2GraphPlugin extends Plugin {
 				this.refreshGraphLeaves();
 			}),
 		);
+
+		// Iterates through all tabs which are of type "graph".
+		this.refreshGraphLeaves();
 	}
 
 	/**
@@ -47,12 +48,19 @@ export default class Folders2GraphPlugin extends Plugin {
 			// Restablish the original data setter in the render, then delete the custom on, then reload the leaf.
 			if (leaf.view.renderer.originalSetData) {
 				leaf.view.renderer.setData = leaf.view.renderer.originalSetData;
-
 				delete leaf.view.renderer.originalSetData;
-
-				leaf.view.unload();
-				leaf.view.load();
 			}
+
+			leaf.view.renderer.nodes.forEach((e) => {
+				if (e.originalGetFillColor) {
+					e.getFillColor = e.originalGetFillColor;
+					delete e.originalGetFillColor;
+				}
+			});
+
+			leaf.view.unload();
+			leaf.view.load();
+			leaf.view.renderer.changed();
 		});
 	}
 
@@ -65,9 +73,10 @@ export default class Folders2GraphPlugin extends Plugin {
 		leaves.forEach((leaf) => {
 			if (leaf.view.getViewType() === "graph") {
 				this.__injectDataInLeaf(leaf);
-				leaf.view.unload();
-				leaf.view.load();
 			}
+			leaf.view.unload();
+			leaf.view.load();
+			leaf.view.renderer.changed();
 		});
 	}
 
@@ -121,6 +130,26 @@ export default class Folders2GraphPlugin extends Plugin {
 			if (this.settings.hideRootNode && data.nodes["/"]) {
 				delete data.nodes["/"];
 			}
+
+			renderer.nodes = renderer.nodes.map((e) => {
+				if (e.originalGetFillColor == undefined) {
+					e.originalGetFillColor = e.getFillColor;
+				}
+
+				e.getFillColor = () => {
+					if (e.type == FOLDER_NODE_TAG) {
+						return { a: 1, rgb: this.__getNodeColorNumber() };
+					}
+
+					if (!e.originalGetFillColor) {
+						throw new Error("originalGetFillColor is undefined.");
+					}
+
+					return e.originalGetFillColor();
+				};
+
+				return e;
+			});
 
 			return renderer.originalSetData(data);
 		};
@@ -186,5 +215,22 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	/**
+	 * Get the node color number.
+	 * @description The color is stored in hex format and the renderer uses a number which is the concatenation of the binary values of the RGB components.
+	 * @example
+	 * const color = "#001100"; // (00000000 00000001 0000001)
+	 * const result = __getNodeColorNumber(color);
+	 * // result = 129
+	 * @returns
+	 */
+	private __getNodeColorNumber(): number {
+		const r = parseInt(this.settings.nodeColor.substring(1, 3), 16).toString(2).padStart(8, "0");
+		const g = parseInt(this.settings.nodeColor.substring(3, 5), 16).toString(2).padStart(8, "0");
+		const b = parseInt(this.settings.nodeColor.substring(5, 7), 16).toString(2).padStart(8, "0");
+
+		return parseInt(r + g + b, 2);
 	}
 }

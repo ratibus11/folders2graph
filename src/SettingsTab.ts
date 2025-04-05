@@ -24,9 +24,20 @@ export class SettingsTab extends PluginSettingTab {
 			.setName(this.__i18n.settings.hideRootNode.name)
 			.setDesc(this.__i18n.settings.hideRootNode.desc)
 			.addToggle((component) => {
-				component.setValue(this.__plugin.settings.hideRootNode).onChange((value) => {
+				component.setValue(this.__plugin.settings.hideRootNode).onChange(async (value) => {
 					this.__plugin.settings.hideRootNode = value;
-					this.__plugin.saveSettings();
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.nodeColor.name)
+			.setDesc(this.__i18n.settings.nodeColor.desc)
+			.addColorPicker((component) => {
+				component.setValue(this.__plugin.settings.nodeColor).onChange(async (value) => {
+					this.__plugin.settings.nodeColor = value;
+					await this.__plugin.saveSettings();
 					this.__plugin.refreshGraphLeaves();
 				});
 			});
