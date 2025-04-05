@@ -4,5 +4,9 @@ export type I18n = {
 			name: string;
 			desc: string;
 		};
+		nodeColor: {
+			name: string;
+			desc: string;
+		};
 	};
 };
