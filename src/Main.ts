@@ -10,7 +10,7 @@ import { SettingsTab } from "SettingsTab";
 const FOLDER_NODE_TAG = "tag";
 
 export default class Folders2GraphPlugin extends Plugin {
-	public settings: Settings = {
+	public override settings: Settings = {
 		hideRootNode: false,
 	};
 
