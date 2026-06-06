@@ -110,6 +110,10 @@ export default class Folders2GraphPlugin extends Plugin {
 			Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
 				if (nodeData.type != FOLDER_NODE_TAG || nodeData.folderNode) {
 					const directParent = this.__getNodeParentFolder(nodeId);
+					// Parent folder may be absent (folder-set vs parent-calc mismatch); create it, don't crash.
+					if (data.nodes[directParent] == null) {
+						data.nodes[directParent] = { type: FOLDER_NODE_TAG, links: {}, folderNode: true };
+					}
 					data.nodes[directParent].links[nodeId] = true;
 				}
 			});
