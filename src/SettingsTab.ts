@@ -1,10 +1,10 @@
-import * as i18n from "i18n";
+import { getI18n } from "i18n";
 import Folders2GraphPlugin from "Main";
 import { App, PluginSettingTab, Setting } from "obsidian";
 import { I18n } from "types/I18n";
 
 export class SettingsTab extends PluginSettingTab {
-	private __i18n: I18n = this.__getI18n();
+	private __i18n: I18n = getI18n();
 
 	private __plugin: Folders2GraphPlugin;
 
@@ -20,6 +20,18 @@ export class SettingsTab extends PluginSettingTab {
 		let { containerEl } = this;
 
 		containerEl.empty();
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.showFolderNodes.name)
+			.setDesc(this.__i18n.settings.showFolderNodes.desc)
+			.addToggle((component) => {
+				component.setValue(this.__plugin.settings.showFolderNodes).onChange(async (value) => {
+					this.__plugin.settings.showFolderNodes = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
 		new Setting(containerEl)
 			.setName(this.__i18n.settings.hideRootNode.name)
 			.setDesc(this.__i18n.settings.hideRootNode.desc)
@@ -65,18 +77,4 @@ export class SettingsTab extends PluginSettingTab {
 			});
 	}
 
-	/**
-	 * Get the I18n object based on the language code stored in the Obsidian app localstorage.
-	 * @returns The I18n object.
-	 */
-	private __getI18n(): I18n {
-		const languageCode = window.localStorage.getItem("language");
-
-		switch (languageCode) {
-			case "fr":
-				return i18n.frFR;
-			default:
-				return i18n.enUS;
-		}
-	}
 }

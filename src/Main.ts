@@ -15,6 +15,7 @@ import { GraphLeafWithCustomRenderer } from "interfaces/GraphLeafWithCustomRende
 import { LeafRenderer } from "interfaces/LeafRenderer";
 import { RendererData } from "interfaces/RendererData";
 
+import { getI18n } from "i18n";
 import { Nullable } from "types/Nullable";
 import { Settings } from "interfaces/Settings";
 import { SettingsTab } from "SettingsTab";
@@ -24,6 +25,7 @@ const HEADING_NODE_TAG = "f2g_heading_node";
 
 export default class Folders2GraphPlugin extends Plugin {
 	public override settings: Settings = {
+		showFolderNodes: true,
 		hideRootNode: false,
 		nodeColor: "#5c8af5",
 		showHeadingNodes: false,
@@ -45,6 +47,32 @@ export default class Folders2GraphPlugin extends Plugin {
 		// Load settings tab.
 		await this.__loadSettings();
 		this.addSettingTab(new SettingsTab(this.app, this));
+
+		// Register commands so the user can bind hotkeys to toggle each node type. `Mod`
+		// resolves to Ctrl on Windows/Linux and Cmd on macOS, matching Obsidian's
+		// cross-platform convention. Default bindings: Mod+Shift+G for folders, Mod+Shift+H
+		// for headings.
+		this.addCommand({
+			id: "toggle-folder-nodes",
+			name: getI18n().commands.toggleFolderNodes.name,
+			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "G" }],
+			callback: async () => {
+				this.settings.showFolderNodes = !this.settings.showFolderNodes;
+				await this.saveSettings();
+				this.refreshGraphLeaves();
+			},
+		});
+
+		this.addCommand({
+			id: "toggle-heading-nodes",
+			name: getI18n().commands.toggleHeadingNodes.name,
+			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "H" }],
+			callback: async () => {
+				this.settings.showHeadingNodes = !this.settings.showHeadingNodes;
+				await this.saveSettings();
+				this.refreshGraphLeaves();
+			},
+		});
 
 		// Intercept folder node clicks to reveal them in the file explorer.
 		this.__wrapOpenLinkText();
@@ -205,43 +233,48 @@ export default class Folders2GraphPlugin extends Plugin {
 
 		// Define the custom data setter.
 		renderer.setData = (data: RendererData) => {
-			const folders = new Set("/");
-
-			// Get all folders of the nodes. Uses the ID of the node.
-			// eg. file "folder/subfolder/file.md" will generate the following folders: "/", "/folder", "/folder/subfolder
-			Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
-				const nodeSubFolders = this.__getNodeParentFolders(nodeId);
-
-				if (!nodeData.folderNode && nodeData.type != FOLDER_NODE_TAG && nodeSubFolders != null) {
-					nodeSubFolders.forEach(folders.add, folders);
-				}
-			});
-
-			// Add a node for each folder.
-			this.__folderNodeIds.clear();
-			folders.forEach((folder) => {
-				data.nodes[folder] = {
-					type: FOLDER_NODE_TAG,
-					links: {},
-					folderNode: true,
-				};
-				this.__folderNodeIds.add(folder);
-			});
-
-			// Add the links between the nodes and the folders.
-			Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
-				if (nodeData.type != FOLDER_NODE_TAG || nodeData.folderNode) {
-					const directParent = this.__getNodeParentFolder(nodeId);
-					data.nodes[directParent].links[nodeId] = true;
-				}
-			});
-
 			if (!renderer.originalSetData) {
 				throw new Error("originalSetData is undefined.");
 			}
 
-			if (this.settings.hideRootNode && data.nodes["/"]) {
-				delete data.nodes["/"];
+			// Clear the tracked folder node IDs first so a toggle-off leaves no stale entries
+			// behind that would still hijack `openLinkText`.
+			this.__folderNodeIds.clear();
+
+			if (this.settings.showFolderNodes) {
+				const folders = new Set("/");
+
+				// Get all folders of the nodes. Uses the ID of the node.
+				// eg. file "folder/subfolder/file.md" will generate the following folders: "/", "/folder", "/folder/subfolder
+				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
+					const nodeSubFolders = this.__getNodeParentFolders(nodeId);
+
+					if (!nodeData.folderNode && nodeData.type != FOLDER_NODE_TAG && nodeSubFolders != null) {
+						nodeSubFolders.forEach(folders.add, folders);
+					}
+				});
+
+				// Add a node for each folder.
+				folders.forEach((folder) => {
+					data.nodes[folder] = {
+						type: FOLDER_NODE_TAG,
+						links: {},
+						folderNode: true,
+					};
+					this.__folderNodeIds.add(folder);
+				});
+
+				// Add the links between the nodes and the folders.
+				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
+					if (nodeData.type != FOLDER_NODE_TAG || nodeData.folderNode) {
+						const directParent = this.__getNodeParentFolder(nodeId);
+						data.nodes[directParent].links[nodeId] = true;
+					}
+				});
+
+				if (this.settings.hideRootNode && data.nodes["/"]) {
+					delete data.nodes["/"];
+				}
 			}
 
 			if (this.settings.showHeadingNodes) {

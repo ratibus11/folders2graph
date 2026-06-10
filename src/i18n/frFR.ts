@@ -2,6 +2,10 @@ import { I18n } from "types/I18n";
 
 export const frFR: I18n = {
 	settings: {
+		showFolderNodes: {
+			name: "Afficher les nœuds de dossier",
+			desc: "Affiche la structure des dossiers de votre coffre comme des nœuds dans la vue graphique. Désactiver pour ne voir que les liens entre les notes. (affiché par défaut)",
+		},
 		hideRootNode: {
 			name: "Cacher le nœud racine",
 			desc: "Cacher ou non le nœud du dossier racine ('/') dans la vue graphique. (affiché par défaut)",
@@ -17,6 +21,14 @@ export const frFR: I18n = {
 		headingNodeColor: {
 			name: "Couleur des nœuds de titre",
 			desc: "Couleur des nœuds de titre dans la vue graphique. (par défaut à #f5a55c)",
+		},
+	},
+	commands: {
+		toggleFolderNodes: {
+			name: "Afficher ou masquer les nœuds de dossier",
+		},
+		toggleHeadingNodes: {
+			name: "Afficher ou masquer les nœuds de titre",
 		},
 	},
 };
