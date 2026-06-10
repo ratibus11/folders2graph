@@ -46,17 +46,23 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public override onunload(): void {
 		this.__getLeavesOfTypeGraph().forEach((leaf) => {
+			// A `graph`-typed leaf can exist without a mounted renderer (e.g. the view never
+			// finished initializing, or was destroyed before unload). Skip those to avoid
+			// crashing the whole unload, which would leave other leaves un-restored.
+			const renderer = leaf.view.renderer;
+			if (!renderer) return;
+
 			// Restablish the original data setter in the render, then delete the custom on, then reload the leaf.
-			if (leaf.view.renderer.originalSetData) {
-				leaf.view.renderer.setData = leaf.view.renderer.originalSetData;
-				delete leaf.view.renderer.originalSetData;
+			if (renderer.originalSetData) {
+				renderer.setData = renderer.originalSetData;
+				delete renderer.originalSetData;
 			}
 
-			this.__unpatchNodePrototype(leaf.view.renderer);
+			this.__unpatchNodePrototype(renderer);
 
 			leaf.view.unload();
 			leaf.view.load();
-			leaf.view.renderer.changed();
+			renderer.changed();
 		});
 	}
 
@@ -67,12 +73,16 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public refreshGraphLeaves(leaves: GraphLeafWithCustomRenderer[] = this.__getLeavesOfTypeGraph()): void {
 		leaves.forEach((leaf) => {
-			if (leaf.view.getViewType() === "graph") {
+			// A `graph`-typed leaf can exist without a mounted renderer (e.g. on plugin
+			// startup before the view finishes initializing, or for graph leaves currently
+			// detached from a workspace tab). Skip injection in that case to avoid crashing
+			// on `renderer.originalSetData`.
+			if (leaf.view.getViewType() === "graph" && leaf.view.renderer) {
 				this.__injectDataInLeaf(leaf);
 			}
 			leaf.view.unload();
 			leaf.view.load();
-			leaf.view.renderer.changed();
+			leaf.view.renderer?.changed();
 		});
 	}
 
