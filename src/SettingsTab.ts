@@ -16,7 +16,7 @@ export class SettingsTab extends PluginSettingTab {
 	/**
 	 * Render the settings tab in the UI.
 	 */
-	public display(): void {
+	public override display(): void {
 		let { containerEl } = this;
 
 		containerEl.empty();
