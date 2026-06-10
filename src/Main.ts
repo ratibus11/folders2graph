@@ -73,16 +73,15 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public refreshGraphLeaves(leaves: GraphLeafWithCustomRenderer[] = this.__getLeavesOfTypeGraph()): void {
 		leaves.forEach((leaf) => {
-			// A `graph`-typed leaf can exist without a mounted renderer (e.g. on plugin
-			// startup before the view finishes initializing, or for graph leaves currently
-			// detached from a workspace tab). Skip injection in that case to avoid crashing
-			// on `renderer.originalSetData`.
-			if (leaf.view.getViewType() === "graph" && leaf.view.renderer) {
-				this.__injectDataInLeaf(leaf);
-			}
+			// Only graph leaves with a mounted renderer should be touched. Running
+			// `view.unload(); view.load()` on a non-graph leaf (e.g. the file explorer that
+			// just became active via `active-leaf-change`) rebinds its internal listeners,
+			// duplicating its context menu handler — that's the "stacked modals" bug.
+			if (!this.__isReadyGraphLeaf(leaf)) return;
+			this.__injectDataInLeaf(leaf);
 			leaf.view.unload();
 			leaf.view.load();
-			leaf.view.renderer?.changed();
+			leaf.view.renderer.changed();
 		});
 	}
 
