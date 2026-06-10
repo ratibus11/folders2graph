@@ -8,5 +8,13 @@ export type I18n = {
 			name: string;
 			desc: string;
 		};
+		showHeadingNodes: {
+			name: string;
+			desc: string;
+		};
+		headingNodeColor: {
+			name: string;
+			desc: string;
+		};
 	};
 };
