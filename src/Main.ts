@@ -1,17 +1,19 @@
 import { Plugin, WorkspaceLeaf } from "obsidian";
 
 import { GraphLeafWithCustomRenderer } from "interfaces/GraphLeafWithCustomRenderer";
+import { LeafRenderer } from "interfaces/LeafRenderer";
 import { RendererData } from "interfaces/RendererData";
 
 import { Nullable } from "types/Nullable";
 import { Settings } from "interfaces/Settings";
 import { SettingsTab } from "SettingsTab";
 
-const FOLDER_NODE_TAG = "tag";
+const FOLDER_NODE_TAG = "f2g_node";
 
 export default class Folders2GraphPlugin extends Plugin {
-	public settings: Settings = {
+	public override settings: Settings = {
 		hideRootNode: false,
+		nodeColor: "#5c8af5",
 	};
 
 	/**
@@ -21,9 +23,6 @@ export default class Folders2GraphPlugin extends Plugin {
 		// Load settings tab.
 		await this.__loadSettings();
 		this.addSettingTab(new SettingsTab(this.app, this));
-
-		// Iterates through all tabs which are of type "graph".
-		this.refreshGraphLeaves();
 
 		// When a leaf changes, refresh all graph leaves.
 		this.registerEvent(
@@ -37,6 +36,9 @@ export default class Folders2GraphPlugin extends Plugin {
 				this.refreshGraphLeaves();
 			}),
 		);
+
+		// Iterates through all tabs which are of type "graph".
+		this.refreshGraphLeaves();
 	}
 
 	/**
@@ -44,15 +46,23 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public override onunload(): void {
 		this.__getLeavesOfTypeGraph().forEach((leaf) => {
+			// A `graph`-typed leaf can exist without a mounted renderer (e.g. the view never
+			// finished initializing, or was destroyed before unload). Skip those to avoid
+			// crashing the whole unload, which would leave other leaves un-restored.
+			const renderer = leaf.view.renderer;
+			if (!renderer) return;
+
 			// Restablish the original data setter in the render, then delete the custom on, then reload the leaf.
-			if (leaf.view.renderer.originalSetData) {
-				leaf.view.renderer.setData = leaf.view.renderer.originalSetData;
-
-				delete leaf.view.renderer.originalSetData;
-
-				leaf.view.unload();
-				leaf.view.load();
+			if (renderer.originalSetData) {
+				renderer.setData = renderer.originalSetData;
+				delete renderer.originalSetData;
 			}
+
+			this.__unpatchNodePrototype(renderer);
+
+			leaf.view.unload();
+			leaf.view.load();
+			renderer.changed();
 		});
 	}
 
@@ -63,11 +73,16 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public refreshGraphLeaves(leaves: GraphLeafWithCustomRenderer[] = this.__getLeavesOfTypeGraph()): void {
 		leaves.forEach((leaf) => {
-			if (leaf.view.getViewType() === "graph") {
+			// A `graph`-typed leaf can exist without a mounted renderer (e.g. on plugin
+			// startup before the view finishes initializing, or for graph leaves currently
+			// detached from a workspace tab). Skip injection in that case to avoid crashing
+			// on `renderer.originalSetData`.
+			if (leaf.view.getViewType() === "graph" && leaf.view.renderer) {
 				this.__injectDataInLeaf(leaf);
-				leaf.view.unload();
-				leaf.view.load();
 			}
+			leaf.view.unload();
+			leaf.view.load();
+			leaf.view.renderer?.changed();
 		});
 	}
 
@@ -122,8 +137,51 @@ export default class Folders2GraphPlugin extends Plugin {
 				delete data.nodes["/"];
 			}
 
-			return renderer.originalSetData(data);
+			const result = renderer.originalSetData(data);
+
+			this.__patchNodePrototype(renderer);
+
+			return result;
 		};
+	}
+
+	/**
+	 * Patches the Node class prototype so every node instance — current and future —
+	 * returns the configured color for folder nodes. Patching the prototype (rather than
+	 * each instance) ensures the override survives node recreations triggered by Obsidian
+	 * (e.g. toggling orphans, tag filters) without going through our custom `setData`.
+	 */
+	private __patchNodePrototype(renderer: LeafRenderer): void {
+		if (renderer.nodes.length === 0) return;
+
+		const proto = Object.getPrototypeOf(renderer.nodes[0]);
+		if (proto.__f2gPatched) return;
+
+		const originalGetFillColor = proto.getFillColor;
+		const plugin = this;
+
+		proto.__f2gOriginalGetFillColor = originalGetFillColor;
+		proto.getFillColor = function () {
+			if (this.type === FOLDER_NODE_TAG) {
+				return { a: 1, rgb: plugin.__getNodeColorNumber() };
+			}
+			return originalGetFillColor.call(this);
+		};
+		proto.__f2gPatched = true;
+	}
+
+	/**
+	 * Restores the original `getFillColor` on the Node prototype. Called on plugin unload.
+	 */
+	private __unpatchNodePrototype(renderer: LeafRenderer): void {
+		if (renderer.nodes.length === 0) return;
+
+		const proto = Object.getPrototypeOf(renderer.nodes[0]);
+		if (!proto.__f2gPatched) return;
+
+		proto.getFillColor = proto.__f2gOriginalGetFillColor;
+		delete proto.__f2gOriginalGetFillColor;
+		delete proto.__f2gPatched;
 	}
 
 	/**
@@ -186,5 +244,22 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	/**
+	 * Get the node color number.
+	 * @description The color is stored in hex format and the renderer uses a number which is the concatenation of the binary values of the RGB components.
+	 * @example
+	 * const color = "#001100"; // (00000000 00000001 0000001)
+	 * const result = __getNodeColorNumber(color);
+	 * // result = 129
+	 * @returns
+	 */
+	private __getNodeColorNumber(): number {
+		const r = parseInt(this.settings.nodeColor.substring(1, 3), 16).toString(2).padStart(8, "0");
+		const g = parseInt(this.settings.nodeColor.substring(3, 5), 16).toString(2).padStart(8, "0");
+		const b = parseInt(this.settings.nodeColor.substring(5, 7), 16).toString(2).padStart(8, "0");
+
+		return parseInt(r + g + b, 2);
 	}
 }
