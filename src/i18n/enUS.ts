@@ -6,9 +6,5 @@ export const enUS: I18n = {
 			name: "Hide root node",
 			desc: "Either hide or show the root folder node ('/') in the graph view. (displayed by default)",
 		},
-		nodeColor: {
-			name: "Node color",
-			desc: "Color to display nodes in the graph view. (defaulted to #5c8af5)",
-		},
 	},
 };

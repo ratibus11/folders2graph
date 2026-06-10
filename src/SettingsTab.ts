@@ -16,7 +16,7 @@ export class SettingsTab extends PluginSettingTab {
 	/**
 	 * Render the settings tab in the UI.
 	 */
-	public override display(): void {
+	public display(): void {
 		let { containerEl } = this;
 
 		containerEl.empty();
@@ -24,20 +24,9 @@ export class SettingsTab extends PluginSettingTab {
 			.setName(this.__i18n.settings.hideRootNode.name)
 			.setDesc(this.__i18n.settings.hideRootNode.desc)
 			.addToggle((component) => {
-				component.setValue(this.__plugin.settings.hideRootNode).onChange(async (value) => {
+				component.setValue(this.__plugin.settings.hideRootNode).onChange((value) => {
 					this.__plugin.settings.hideRootNode = value;
-					await this.__plugin.saveSettings();
-					this.__plugin.refreshGraphLeaves();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName(this.__i18n.settings.nodeColor.name)
-			.setDesc(this.__i18n.settings.nodeColor.desc)
-			.addColorPicker((component) => {
-				component.setValue(this.__plugin.settings.nodeColor).onChange(async (value) => {
-					this.__plugin.settings.nodeColor = value;
-					await this.__plugin.saveSettings();
+					this.__plugin.saveSettings();
 					this.__plugin.refreshGraphLeaves();
 				});
 			});
