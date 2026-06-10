@@ -87,6 +87,16 @@ export default class Folders2GraphPlugin extends Plugin {
 	}
 
 	/**
+	 * A graph leaf is considered ready when its view type is `graph` AND its renderer has
+	 * been mounted. The renderer can briefly be undefined when the `active-leaf-change`
+	 * event fires before the graph view finishes initializing, so this guard prevents the
+	 * downstream code from crashing on `renderer.*`.
+	 */
+	private __isReadyGraphLeaf(leaf: Nullable<GraphLeafWithCustomRenderer>): leaf is GraphLeafWithCustomRenderer {
+		return !!leaf && !!leaf.view && leaf.view.getViewType() === "graph" && !!leaf.view.renderer;
+	}
+
+	/**
 	 * Renders the graph leaf with a custom renderer.
 	 * @param leaf The graph leaf to render.
 	 */
