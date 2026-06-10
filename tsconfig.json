@@ -5,18 +5,9 @@
 		"target": "ESNext",
 		"module": "NodeNext",
 
+		"baseUrl": "src",
 		"rootDir": ".",
 		"moduleResolution": "NodeNext",
-
-		"paths": {
-			"Main": ["./src/Main.ts"],
-			"SettingsTab": ["./src/SettingsTab.ts"],
-			"i18n": ["./src/i18n/index.ts"],
-			"interfaces/*": ["./src/interfaces/*"],
-			"types/*": ["./src/types/*"]
-		},
-
-		"skipLibCheck": true,
 
 		"allowSyntheticDefaultImports": true,
 		"esModuleInterop": true,
