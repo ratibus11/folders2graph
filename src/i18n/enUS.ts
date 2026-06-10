@@ -2,6 +2,10 @@ import { I18n } from "types/I18n";
 
 export const enUS: I18n = {
 	settings: {
+		showFolderNodes: {
+			name: "Show folder nodes",
+			desc: "Display your vault's folder structure as nodes in the graph view. Disable to focus on note-to-note connections only. (displayed by default)",
+		},
 		hideRootNode: {
 			name: "Hide root node",
 			desc: "Either hide or show the root folder node ('/') in the graph view. (displayed by default)",
@@ -17,6 +21,14 @@ export const enUS: I18n = {
 		headingNodeColor: {
 			name: "Heading node color",
 			desc: "Color used to display heading nodes in the graph view. (defaulted to #f5a55c)",
+		},
+	},
+	commands: {
+		toggleFolderNodes: {
+			name: "Show or hide folder nodes",
+		},
+		toggleHeadingNodes: {
+			name: "Show or hide heading nodes",
 		},
 	},
 };
