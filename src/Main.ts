@@ -1,4 +1,15 @@
-import { CachedMetadata, HeadingCache, Plugin, TFile, WorkspaceLeaf, getLinkpath } from "obsidian";
+import {
+	CachedMetadata,
+	HeadingCache,
+	OpenViewState,
+	PaneType,
+	Plugin,
+	TFile,
+	TFolder,
+	Workspace,
+	WorkspaceLeaf,
+	getLinkpath,
+} from "obsidian";
 
 import { GraphLeafWithCustomRenderer } from "interfaces/GraphLeafWithCustomRenderer";
 import { LeafRenderer } from "interfaces/LeafRenderer";
@@ -19,6 +30,14 @@ export default class Folders2GraphPlugin extends Plugin {
 		headingNodeColor: "#f5a55c",
 	};
 
+	/** IDs of folder nodes currently injected into the graph. Used to identify folder
+	 * clicks in the wrapped `openLinkText` without relying on the brittle `startsWith("/")`
+	 * heuristic, which could collide with unusual user wikilinks. */
+	private __folderNodeIds = new Set<string>();
+
+	/** Original `workspace.openLinkText` saved when we wrap it, so we can restore on unload. */
+	private __originalOpenLinkText: Nullable<Workspace["openLinkText"]> = null;
+
 	/**
 	 * Triggered when the plugin is loaded.
 	 */
@@ -26,6 +45,9 @@ export default class Folders2GraphPlugin extends Plugin {
 		// Load settings tab.
 		await this.__loadSettings();
 		this.addSettingTab(new SettingsTab(this.app, this));
+
+		// Intercept folder node clicks to reveal them in the file explorer.
+		this.__wrapOpenLinkText();
 
 		// When a leaf changes, refresh all graph leaves.
 		this.registerEvent(
@@ -48,6 +70,8 @@ export default class Folders2GraphPlugin extends Plugin {
 	 * Triggered when the plugin is unloaded.
 	 */
 	public override onunload(): void {
+		this.__unwrapOpenLinkText();
+
 		this.__getLeavesOfTypeGraph().forEach((leaf) => {
 			// Restablish the original data setter in the render, then delete the custom on, then reload the leaf.
 			if (leaf.view.renderer.originalSetData) {
@@ -61,6 +85,75 @@ export default class Folders2GraphPlugin extends Plugin {
 			leaf.view.load();
 			leaf.view.renderer.changed();
 		});
+	}
+
+	/**
+	 * Wraps `workspace.openLinkText` so that clicks on folder nodes reveal the corresponding
+	 * folder in the file explorer instead of failing to resolve a non-existent file. The
+	 * wrapper only intercepts linktexts that match a currently-injected folder node ID, so
+	 * regular wikilink clicks are unaffected.
+	 */
+	private __wrapOpenLinkText(): void {
+		const workspace = this.app.workspace;
+		this.__originalOpenLinkText = workspace.openLinkText.bind(workspace);
+
+		workspace.openLinkText = (
+			linktext: string,
+			sourcePath: string,
+			newLeaf?: PaneType | boolean,
+			openViewState?: OpenViewState,
+		): Promise<void> => {
+			if (this.__folderNodeIds.has(linktext)) {
+				this.__revealFolderInExplorer(linktext);
+				return Promise.resolve();
+			}
+			return this.__originalOpenLinkText!(linktext, sourcePath, newLeaf, openViewState);
+		};
+	}
+
+	/**
+	 * Restores the original `workspace.openLinkText`.
+	 */
+	private __unwrapOpenLinkText(): void {
+		if (!this.__originalOpenLinkText) return;
+		this.app.workspace.openLinkText = this.__originalOpenLinkText;
+		this.__originalOpenLinkText = null;
+	}
+
+	/**
+	 * Reveals the folder backing a folder node in Obsidian's file explorer. Folder node IDs
+	 * use a leading `/` and a `/`-rooted path (e.g. `/work/notes`); the vault stores paths
+	 * without the leading slash, and the vault root is `""`.
+	 */
+	private __revealFolderInExplorer(folderNodeId: string): void {
+		const vaultPath = folderNodeId === "/" ? "" : folderNodeId.slice(1);
+		const folder: Nullable<TFolder> =
+			vaultPath === ""
+				? this.app.vault.getRoot()
+				: (this.app.vault.getAbstractFileByPath(vaultPath) as Nullable<TFolder>);
+		if (!folder) return;
+
+		// Make sure a file-explorer leaf exists and is in focus.
+		let leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
+		if (!leaf) {
+			const leftLeaf = this.app.workspace.getLeftLeaf(false);
+			if (leftLeaf) {
+				leftLeaf.setViewState({ type: "file-explorer" });
+				leaf = leftLeaf;
+			}
+		}
+		if (!leaf) return;
+		this.app.workspace.revealLeaf(leaf);
+
+		// `revealInFolder` is exposed by the internal `file-explorer` plugin instance.
+		// Not part of the public API — fall back silently if it ever moves.
+		const fileExplorerInstance = (this.app as unknown as {
+			internalPlugins?: {
+				getPluginById?: (id: string) => { instance?: { revealInFolder?: (f: TFolder) => void } };
+			};
+		}).internalPlugins?.getPluginById?.("file-explorer")?.instance;
+
+		fileExplorerInstance?.revealInFolder?.(folder);
 	}
 
 	/**
@@ -106,12 +199,14 @@ export default class Folders2GraphPlugin extends Plugin {
 			});
 
 			// Add a node for each folder.
+			this.__folderNodeIds.clear();
 			folders.forEach((folder) => {
 				data.nodes[folder] = {
 					type: FOLDER_NODE_TAG,
 					links: {},
 					folderNode: true,
 				};
+				this.__folderNodeIds.add(folder);
 			});
 
 			// Add the links between the nodes and the folders.
