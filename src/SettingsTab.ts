@@ -41,6 +41,28 @@ export class SettingsTab extends PluginSettingTab {
 					this.__plugin.refreshGraphLeaves();
 				});
 			});
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.showHeadingNodes.name)
+			.setDesc(this.__i18n.settings.showHeadingNodes.desc)
+			.addToggle((component) => {
+				component.setValue(this.__plugin.settings.showHeadingNodes).onChange(async (value) => {
+					this.__plugin.settings.showHeadingNodes = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.headingNodeColor.name)
+			.setDesc(this.__i18n.settings.headingNodeColor.desc)
+			.addColorPicker((component) => {
+				component.setValue(this.__plugin.settings.headingNodeColor).onChange(async (value) => {
+					this.__plugin.settings.headingNodeColor = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
 	}
 
 	/**
