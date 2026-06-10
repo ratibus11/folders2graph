@@ -1,6 +1,7 @@
 import { Plugin, WorkspaceLeaf } from "obsidian";
 
 import { GraphLeafWithCustomRenderer } from "interfaces/GraphLeafWithCustomRenderer";
+import { LeafRenderer } from "interfaces/LeafRenderer";
 import { RendererData } from "interfaces/RendererData";
 
 import { Nullable } from "types/Nullable";
@@ -51,12 +52,7 @@ export default class Folders2GraphPlugin extends Plugin {
 				delete leaf.view.renderer.originalSetData;
 			}
 
-			leaf.view.renderer.nodes.forEach((e) => {
-				if (e.originalGetFillColor) {
-					e.getFillColor = e.originalGetFillColor;
-					delete e.originalGetFillColor;
-				}
-			});
+			this.__unpatchNodePrototype(leaf.view.renderer);
 
 			leaf.view.unload();
 			leaf.view.load();
@@ -131,28 +127,51 @@ export default class Folders2GraphPlugin extends Plugin {
 				delete data.nodes["/"];
 			}
 
-			renderer.nodes = renderer.nodes.map((e) => {
-				if (e.originalGetFillColor == undefined) {
-					e.originalGetFillColor = e.getFillColor;
-				}
+			const result = renderer.originalSetData(data);
 
-				e.getFillColor = () => {
-					if (e.type == FOLDER_NODE_TAG) {
-						return { a: 1, rgb: this.__getNodeColorNumber() };
-					}
+			this.__patchNodePrototype(renderer);
 
-					if (!e.originalGetFillColor) {
-						throw new Error("originalGetFillColor is undefined.");
-					}
-
-					return e.originalGetFillColor();
-				};
-
-				return e;
-			});
-
-			return renderer.originalSetData(data);
+			return result;
 		};
+	}
+
+	/**
+	 * Patches the Node class prototype so every node instance — current and future —
+	 * returns the configured color for folder nodes. Patching the prototype (rather than
+	 * each instance) ensures the override survives node recreations triggered by Obsidian
+	 * (e.g. toggling orphans, tag filters) without going through our custom `setData`.
+	 */
+	private __patchNodePrototype(renderer: LeafRenderer): void {
+		if (renderer.nodes.length === 0) return;
+
+		const proto = Object.getPrototypeOf(renderer.nodes[0]);
+		if (proto.__f2gPatched) return;
+
+		const originalGetFillColor = proto.getFillColor;
+		const plugin = this;
+
+		proto.__f2gOriginalGetFillColor = originalGetFillColor;
+		proto.getFillColor = function () {
+			if (this.type === FOLDER_NODE_TAG) {
+				return { a: 1, rgb: plugin.__getNodeColorNumber() };
+			}
+			return originalGetFillColor.call(this);
+		};
+		proto.__f2gPatched = true;
+	}
+
+	/**
+	 * Restores the original `getFillColor` on the Node prototype. Called on plugin unload.
+	 */
+	private __unpatchNodePrototype(renderer: LeafRenderer): void {
+		if (renderer.nodes.length === 0) return;
+
+		const proto = Object.getPrototypeOf(renderer.nodes[0]);
+		if (!proto.__f2gPatched) return;
+
+		proto.getFillColor = proto.__f2gOriginalGetFillColor;
+		delete proto.__f2gOriginalGetFillColor;
+		delete proto.__f2gPatched;
 	}
 
 	/**

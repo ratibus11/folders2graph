@@ -16,6 +16,8 @@
 			"types/*": ["./src/types/*"]
 		},
 
+		"skipLibCheck": true,
+
 		"allowSyntheticDefaultImports": true,
 		"esModuleInterop": true,
 
