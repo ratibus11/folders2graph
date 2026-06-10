@@ -67,13 +67,22 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public refreshGraphLeaves(leaves: GraphLeafWithCustomRenderer[] = this.__getLeavesOfTypeGraph()): void {
 		leaves.forEach((leaf) => {
-			if (leaf.view.getViewType() === "graph") {
-				this.__injectDataInLeaf(leaf);
-			}
+			if (!this.__isReadyGraphLeaf(leaf)) return;
+			this.__injectDataInLeaf(leaf);
 			leaf.view.unload();
 			leaf.view.load();
 			leaf.view.renderer.changed();
 		});
+	}
+
+	/**
+	 * A graph leaf is considered ready when its view type is `graph` AND its renderer has
+	 * been mounted. The renderer can briefly be undefined when the `active-leaf-change`
+	 * event fires before the graph view finishes initializing, so this guard prevents the
+	 * downstream code from crashing on `renderer.*`.
+	 */
+	private __isReadyGraphLeaf(leaf: Nullable<GraphLeafWithCustomRenderer>): leaf is GraphLeafWithCustomRenderer {
+		return !!leaf && !!leaf.view && leaf.view.getViewType() === "graph" && !!leaf.view.renderer;
 	}
 
 	/**
