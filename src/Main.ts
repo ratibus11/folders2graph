@@ -79,6 +79,18 @@ export default class Folders2GraphPlugin extends Plugin {
 		this.__shiftHeld = false;
 	};
 
+	/** Set to true by the PIXI rightdown wrapper when it swallows a Shift+right-click with
+	 * hidden descendants, so the subsequent DOM `contextmenu` event can be suppressed without
+	 * any coordinate hit-testing. Reset immediately after consumption. */
+	private __suppressNextContextMenu = false;
+
+	/** WeakMap from a leaf's containerEl to its AbortController, used for the DOM
+	 * contextmenu suppression listener. */
+	private __contextMenuAbortControllers: WeakMap<HTMLElement, AbortController> = new WeakMap();
+
+	/** Flat set of all active AbortControllers so onunload can abort them all. */
+	private __activeAbortControllers: Set<AbortController> = new Set();
+
 	/**
 	 * Triggered when the plugin is loaded.
 	 */
@@ -148,6 +160,10 @@ export default class Folders2GraphPlugin extends Plugin {
 		window.removeEventListener("keydown", this.__onKeyDown, true);
 		window.removeEventListener("keyup", this.__onKeyUp, true);
 		window.removeEventListener("blur", this.__onBlur, true);
+
+		// Abort DOM contextmenu suppression listeners installed by __installContextMenuSuppressor.
+		this.__activeAbortControllers.forEach((controller) => controller.abort());
+		this.__activeAbortControllers.clear();
 
 		this.__getLeavesOfTypeGraph().forEach((leaf) => {
 			// A `graph`-typed leaf can exist without a mounted renderer (e.g. the view never
@@ -265,6 +281,9 @@ export default class Folders2GraphPlugin extends Plugin {
 			this.__injectDataInLeaf(leaf);
 			leaf.view.unload();
 			leaf.view.load();
+			// Install the contextmenu suppressor AFTER unload/load — the reload may rebuild
+			// the view's DOM, which would orphan a listener installed before it.
+			this.__installContextMenuSuppressor(leaf);
 			leaf.view.renderer.changed();
 		});
 	}
@@ -510,6 +529,68 @@ export default class Folders2GraphPlugin extends Plugin {
 	}
 
 	/**
+	 * Returns true if at least one structural descendant of `nodeId` is currently hidden.
+	 * Shared criterion between the PIXI right-click wrapper (whether to swallow the gesture)
+	 * and `__handleRecursiveUnfold` (whether there is anything to unfold).
+	 */
+	private __hasHiddenDescendant(nodeId: string): boolean {
+		return this.__getAllDescendants(nodeId).some((id) => this.settings.hiddenNodes[id]);
+	}
+
+	/**
+	 * Handles Shift+right-click on a node: recursively unfolds the whole subtree,
+	 * unconditionally — every hidden structural descendant is revealed, whatever the current
+	 * state (fully folded, partially folded or mixed). No-op when nothing is hidden.
+	 */
+	private __handleRecursiveUnfold(nodeId: string): void {
+		const toUnhide = this.__getAllDescendants(nodeId).filter((id) => this.settings.hiddenNodes[id]);
+		if (toUnhide.length === 0) return;
+
+		for (const descId of toUnhide) {
+			delete this.settings.hiddenNodes[descId];
+		}
+
+		this.saveSettings();
+		this.refreshGraphLeaves();
+	}
+
+	/**
+	 * Installs a capture-phase DOM `contextmenu` listener on the graph view container that
+	 * suppresses the native context menu right after the PIXI rightdown wrapper swallowed a
+	 * Shift+right-click. No coordinate hit-testing is involved: the PIXI wrapper sets
+	 * `__suppressNextContextMenu` and this listener merely consumes the flag.
+	 *
+	 * One listener per container: any previous controller for the same container is aborted
+	 * before registering, so repeated refreshGraphLeaves calls never stack listeners.
+	 */
+	private __installContextMenuSuppressor(leaf: GraphLeafWithCustomRenderer): void {
+		const containerEl = leaf.view.containerEl;
+
+		const existing = this.__contextMenuAbortControllers.get(containerEl);
+		if (existing) {
+			existing.abort();
+			this.__activeAbortControllers.delete(existing);
+		}
+
+		const controller = new AbortController();
+		this.__contextMenuAbortControllers.set(containerEl, controller);
+		this.__activeAbortControllers.add(controller);
+
+		containerEl.addEventListener(
+			"contextmenu",
+			(event: MouseEvent) => {
+				if (this.__suppressNextContextMenu) {
+					event.preventDefault();
+					event.stopPropagation();
+					this.__suppressNextContextMenu = false;
+				}
+				// No flag — let the event through so the native context menu appears.
+			},
+			{ capture: true, signal: controller.signal },
+		);
+	}
+
+	/**
 	 * For a given source node, reads its Markdown headings and inserts a heading node per heading,
 	 * linking each link / embed found in the file to the heading it lives under (the closest
 	 * heading above it). Heading node IDs follow Obsidian's wikilink format `path#heading` so
@@ -659,6 +740,110 @@ export default class Folders2GraphPlugin extends Plugin {
 			};
 		}
 
+		// Patch the node render method (its name varies across Obsidian builds) so that, once
+		// per node instance, the PIXI listeners of the node circle are wrapped to intercept
+		// Shift+right-click. Obsidian registers its own circle listeners (which open the
+		// native context menu) BEFORE ours, so simply adding another listener could not
+		// prevent the native behaviour — the existing listeners are detached and re-invoked
+		// conditionally instead.
+		const renderMethodName = (["render", "draw", "updateGraphics"] as const).find(
+			(name) => typeof proto[name] === "function",
+		) as string | undefined;
+
+		if (renderMethodName) {
+			const originalRender = proto[renderMethodName];
+			proto[`__f2gOriginal_${renderMethodName}`] = originalRender;
+
+			proto[renderMethodName] = function (...args: unknown[]) {
+				originalRender.apply(this, args);
+
+				// Early-out: nothing to do if there is no PIXI circle to patch.
+				if (!this.circle) return;
+
+				// Wrap the circle's PIXI listeners once per node instance. The wrapping is
+				// discarded naturally when unload/load reconstructs the graph view nodes.
+				if (!this.__f2gRightClickWrapped) {
+					this.__f2gRightClickWrapped = true;
+					try {
+						const circle = this.circle as {
+							on?: (event: string, fn: (e: unknown) => void, ctx?: unknown) => void;
+							off?: (event: string, fn: (e: unknown) => void) => void;
+							listeners?: (event: string) => Array<(e: unknown) => void>;
+						};
+						const nodeId: string = this.id;
+
+						// Helper: detach all existing listeners for an event and return them.
+						const detach = (eventName: string): Array<(e: unknown) => void> => {
+							const fns = circle.listeners?.(eventName) ?? [];
+							for (const fn of fns) {
+								circle.off?.(eventName, fn);
+							}
+							return fns;
+						};
+
+						// Helper: forward an event to all original listeners.
+						const forward = (fns: Array<(e: unknown) => void>, e: unknown) => {
+							for (const fn of fns) {
+								fn.call(undefined, e);
+							}
+						};
+
+						// Wrap rightdown: the gate that triggers unfold and sets the suppress flag.
+						const origRightdown = detach("rightdown");
+						circle.on?.("rightdown", (e: unknown) => {
+							const ev = e as { data?: { originalEvent?: MouseEvent }; nativeEvent?: MouseEvent };
+							const native = ev?.data?.originalEvent ?? ev?.nativeEvent;
+							if (native?.shiftKey && plugin.__hasHiddenDescendant(nodeId)) {
+								plugin.__suppressNextContextMenu = true;
+								plugin.__handleRecursiveUnfold(nodeId);
+								// Do NOT forward — we are suppressing the native context menu.
+								return;
+							}
+							forward(origRightdown, e);
+						});
+
+						// Wrap rightup: swallow if the suppress flag is already set (same gesture).
+						const origRightup = detach("rightup");
+						circle.on?.("rightup", (e: unknown) => {
+							if (plugin.__suppressNextContextMenu) {
+								// Flag still set → this rightup belongs to the swallowed gesture.
+								return;
+							}
+							forward(origRightup, e);
+						});
+
+						// Wrap rightclick: same — swallow companion events of the same gesture.
+						const origRightclick = detach("rightclick");
+						circle.on?.("rightclick", (e: unknown) => {
+							if (plugin.__suppressNextContextMenu) {
+								return;
+							}
+							forward(origRightclick, e);
+						});
+
+						// Wrap pointerdown: swallow only button=2 + Shift + hiddenDescendant to
+						// avoid interfering with left-button drag/navigation events.
+						const origPointerdown = detach("pointerdown");
+						circle.on?.("pointerdown", (e: unknown) => {
+							const ev = e as { data?: { originalEvent?: MouseEvent }; nativeEvent?: MouseEvent };
+							const native = ev?.data?.originalEvent ?? ev?.nativeEvent;
+							if (
+								native?.button === 2 &&
+								native?.shiftKey &&
+								plugin.__hasHiddenDescendant(nodeId)
+							) {
+								// Swallow — rightdown handles the actual action.
+								return;
+							}
+							forward(origPointerdown, e);
+						});
+					} catch (err) {
+						// Silently ignore — if the PIXI API differs, native behaviour is preserved.
+					}
+				}
+			};
+		}
+
 		proto.__f2gPatched = true;
 	}
 
@@ -688,6 +873,15 @@ export default class Folders2GraphPlugin extends Plugin {
 		if (proto.__f2gOriginalGetDisplayText) {
 			proto.getDisplayText = proto.__f2gOriginalGetDisplayText;
 			delete proto.__f2gOriginalGetDisplayText;
+		}
+
+		// Restore the patched render method, whichever name was found at patch time.
+		for (const name of ["render", "draw", "updateGraphics"]) {
+			const savedName = `__f2gOriginal_${name}`;
+			if (proto[savedName]) {
+				proto[name] = proto[savedName];
+				delete proto[savedName];
+			}
 		}
 
 		delete proto.__f2gPatched;
