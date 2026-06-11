@@ -166,13 +166,17 @@ export class NodePrototypePatcher {
 				}
 				// The native weight is the number of displayed edges. Inflate it
 				// temporarily by the indirect visible descendant count, call the
-				// original size function to preserve its curve, then restore.
+				// original size function to preserve its curve, then restore. The
+				// restore is in a finally block: leaving the weight inflated after
+				// an exception would permanently corrupt the node's native size.
 				const savedWeight = this.weight;
 				if (typeof savedWeight === "number") {
 					this.weight = savedWeight + indirect;
-					const result = originalGetSize.call(this);
-					this.weight = savedWeight;
-					return result;
+					try {
+						return originalGetSize.call(this);
+					} finally {
+						this.weight = savedWeight;
+					}
 				}
 				// Fallback: weight is not a number — return the original unchanged
 				// to avoid adding a raw count to an unknown pixel scale.

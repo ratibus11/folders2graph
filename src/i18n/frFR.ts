@@ -30,7 +30,7 @@ export const frFR: I18n = {
 		},
 		weightNodesBySubtree: {
 			name: "Pondérer les nœuds par leur sous-arbre complet",
-			desc: "Lorsqu'activé, la taille d'un nœud reflète tous ses descendants structurels visibles (dossiers, fichiers, titres, à tous les niveaux), et non seulement ses enfants directs. Les nœuds repliés redeviennent petits car leurs descendants masqués ne comptent plus. (désactivé par défaut)",
+			desc: "Lorsqu'activé, la taille d'un nœud reflète tous ses descendants structurels visibles — dossiers, fichiers et titres à tous les niveaux — et non seulement ses enfants directs. Les nœuds repliés redeviennent petits car leurs descendants masqués ne comptent plus. (désactivé par défaut)",
 		},
 	},
 	commands: {

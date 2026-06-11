@@ -30,8 +30,9 @@ export class StructuralHierarchy {
 	private collapsedNodeIds: Set<string> = new Set();
 
 	/**
-	 * Maps each node ID to its total number of visible structural descendants
-	 * at all depths (direct + indirect). Updated by
+	 * Maps each node ID that has structural children to its total number of
+	 * visible structural descendants at all depths (direct + indirect). Leaf
+	 * nodes have no entry — their accessors fall back to `0`. Updated by
 	 * `computeVisibleDescendantCounts` once per setData.
 	 */
 	private visibleDescendantCounts: Map<string, number> = new Map();
@@ -57,7 +58,8 @@ export class StructuralHierarchy {
 	}
 
 	/**
-	 * Clears both maps in preparation for a fresh setData pass.
+	 * Clears the relationship maps and every pre-computed cache (collapsed set,
+	 * visible descendant counts) in preparation for a fresh setData pass.
 	 *
 	 * @remarks
 	 * Must be called at the start of every `GraphDataInjector.install` callback
@@ -66,6 +68,7 @@ export class StructuralHierarchy {
 	reset(): void {
 		this.children = {};
 		this.parent = {};
+		this.collapsedNodeIds = new Set();
 		this.visibleDescendantCounts = new Map();
 		this.indirectVisibleDescendantCounts = new Map();
 	}
@@ -282,9 +285,15 @@ export class StructuralHierarchy {
 		this.indirectVisibleDescendantCounts = new Map();
 
 		// Memoised recursive helper: returns total visible descendant count for nodeId.
+		// The `computing` set tracks nodes currently on the recursion stack: memoisation
+		// alone would not terminate on an accidental cycle (the cache entry is only
+		// written AFTER the recursion returns), so — like `getAllDescendants` — we guard
+		// defensively against corrupted state by treating a back-edge as zero.
+		const computing = new Set<string>();
 		const countFor = (nodeId: string): number => {
 			const cached = this.visibleDescendantCounts.get(nodeId);
 			if (cached !== undefined) return cached;
+			if (computing.has(nodeId)) return 0;
 
 			const kids = this.children[nodeId];
 			if (!kids || kids.length === 0) {
@@ -293,6 +302,7 @@ export class StructuralHierarchy {
 				return 0;
 			}
 
+			computing.add(nodeId);
 			let total = 0;
 			let directVisible = 0;
 			for (const childId of kids) {
@@ -303,6 +313,7 @@ export class StructuralHierarchy {
 				directVisible++;
 				total += 1 + countFor(childId);
 			}
+			computing.delete(nodeId);
 
 			this.visibleDescendantCounts.set(nodeId, total);
 			this.indirectVisibleDescendantCounts.set(nodeId, total - directVisible);
