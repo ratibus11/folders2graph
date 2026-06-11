@@ -28,5 +28,8 @@ export type I18n = {
 		toggleHeadingNodes: {
 			name: string;
 		};
+		unfoldAllNodes: {
+			name: string;
+		};
 	};
 };

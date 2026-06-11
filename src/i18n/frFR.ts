@@ -30,5 +30,8 @@ export const frFR: I18n = {
 		toggleHeadingNodes: {
 			name: "Afficher ou masquer les nœuds de titre",
 		},
+		unfoldAllNodes: {
+			name: "Déplier tous les nœuds du graphe",
+		},
 	},
 };

@@ -125,6 +125,18 @@ export default class Folders2GraphPlugin extends Plugin {
 			},
 		});
 
+		// Safety-net command that clears all collapsed state at once. No default hotkey so
+		// the user must bind one deliberately, avoiding accidental triggering.
+		this.addCommand({
+			id: "unfold-all-nodes",
+			name: getI18n().commands.unfoldAllNodes.name,
+			callback: async () => {
+				this.settings.hiddenNodes = {};
+				await this.saveSettings();
+				this.refreshGraphLeaves();
+			},
+		});
+
 		// Intercept folder node clicks to reveal them in the file explorer.
 		this.__wrapOpenLinkText();
 

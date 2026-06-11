@@ -30,5 +30,8 @@ export const enUS: I18n = {
 		toggleHeadingNodes: {
 			name: "Show or hide heading nodes",
 		},
+		unfoldAllNodes: {
+			name: "Unfold all graph nodes",
+		},
 	},
 };
