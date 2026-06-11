@@ -29,6 +29,21 @@ export class StructuralHierarchy {
 	 * by `computeCollapsedSet` once per setData for O(1) frame-time lookups. */
 	private collapsedNodeIds: Set<string> = new Set();
 
+	/**
+	 * Maps each node ID to its total number of visible structural descendants
+	 * at all depths (direct + indirect). Updated by
+	 * `computeVisibleDescendantCounts` once per setData.
+	 */
+	private visibleDescendantCounts: Map<string, number> = new Map();
+
+	/**
+	 * Maps each node ID to the count of visible structural descendants that are
+	 * NOT direct children (i.e. total visible descendants minus visible direct
+	 * children). Updated by `computeVisibleDescendantCounts` once per setData.
+	 * Used by `getSize` patching for an O(1) lookup per call.
+	 */
+	private indirectVisibleDescendantCounts: Map<string, number> = new Map();
+
 	/** Reference to plugin settings, used to read `hiddenNodes`. */
 	private settings: Settings;
 
@@ -51,6 +66,8 @@ export class StructuralHierarchy {
 	reset(): void {
 		this.children = {};
 		this.parent = {};
+		this.visibleDescendantCounts = new Map();
+		this.indirectVisibleDescendantCounts = new Map();
 	}
 
 	/**
@@ -228,6 +245,100 @@ export class StructuralHierarchy {
 	 */
 	isCollapsed(nodeId: string): boolean {
 		return this.collapsedNodeIds.has(nodeId);
+	}
+
+	/**
+	 * Performs a bottom-up memoised DFS over the structural children map to
+	 * compute, for each node, the total number of visible structural descendants
+	 * at all depths and the subset that are indirect (non-direct-child)
+	 * descendants. Results are stored in `visibleDescendantCounts` and
+	 * `indirectVisibleDescendantCounts` for O(1) lookups at frame time.
+	 *
+	 * @remarks
+	 * A child present in `settings.hiddenNodes` is pruned along with its entire
+	 * sub-tree: if the child is hidden, none of its descendants are counted
+	 * either. This correctly models the "folded node shrinks" behaviour: when all
+	 * descendants are hidden (folded), the indirect count drops to zero and the
+	 * node reverts to its native size.
+	 *
+	 * Called once per `setData` pass by `GraphDataInjector`, immediately after
+	 * `computeCollapsedSet`.
+	 *
+	 * @example
+	 * // Hierarchy:
+	 * //   /work  →  work/project  →  work/project/note.md   (visible)
+	 * //                           →  work/project/old.md    (hidden)
+	 * //
+	 * // hiddenNodes = { "work/project/old.md": true }
+	 * //
+	 * // After computeVisibleDescendantCounts():
+	 * //   visibleDescendantCounts("/work")        = 2  (work/project + note.md)
+	 * //   indirectVisibleDescendantCounts("/work") = 1  (note.md is indirect for /work)
+	 * //   visibleDescendantCounts("work/project") = 1  (note.md only)
+	 * //   indirectVisibleDescendantCounts("work/project") = 0
+	 */
+	computeVisibleDescendantCounts(): void {
+		this.visibleDescendantCounts = new Map();
+		this.indirectVisibleDescendantCounts = new Map();
+
+		// Memoised recursive helper: returns total visible descendant count for nodeId.
+		const countFor = (nodeId: string): number => {
+			const cached = this.visibleDescendantCounts.get(nodeId);
+			if (cached !== undefined) return cached;
+
+			const kids = this.children[nodeId];
+			if (!kids || kids.length === 0) {
+				this.visibleDescendantCounts.set(nodeId, 0);
+				this.indirectVisibleDescendantCounts.set(nodeId, 0);
+				return 0;
+			}
+
+			let total = 0;
+			let directVisible = 0;
+			for (const childId of kids) {
+				if (this.settings.hiddenNodes[childId]) {
+					// Child is hidden — prune the entire sub-tree.
+					continue;
+				}
+				directVisible++;
+				total += 1 + countFor(childId);
+			}
+
+			this.visibleDescendantCounts.set(nodeId, total);
+			this.indirectVisibleDescendantCounts.set(nodeId, total - directVisible);
+			return total;
+		};
+
+		for (const nodeId of Object.keys(this.children)) {
+			countFor(nodeId);
+		}
+	}
+
+	/**
+	 * Returns the number of visible structural descendants of `nodeId` that are
+	 * NOT direct children (i.e. grandchildren and deeper). Used by the
+	 * `getSize` patch to inflate `weight` without double-counting the direct
+	 * children that Obsidian already counts natively via displayed edges.
+	 *
+	 * @param nodeId The node to query.
+	 * @returns The indirect visible descendant count, or `0` when the node has
+	 *   none or the counts have not been computed yet.
+	 *
+	 * @remarks
+	 * Only accurate after `computeVisibleDescendantCounts` has been called for
+	 * the current graph data.
+	 *
+	 * @example
+	 * // Hierarchy: /work → work/project → work/project/note.md (all visible)
+	 * // After computeVisibleDescendantCounts():
+	 * hierarchy.getIndirectVisibleDescendantCount("/work");
+	 * // 1  — work/project/note.md is an indirect descendant of /work
+	 *
+	 * hierarchy.getIndirectVisibleDescendantCount("work/project");
+	 * // 0  — work/project/note.md is a direct child, not indirect
+	 */
+	getIndirectVisibleDescendantCount(nodeId: string): number {
+		return this.indirectVisibleDescendantCounts.get(nodeId) ?? 0;
 	}
 
 	/**
