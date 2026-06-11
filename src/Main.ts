@@ -841,6 +841,115 @@ export default class Folders2GraphPlugin extends Plugin {
 						// Silently ignore — if the PIXI API differs, native behaviour is preserved.
 					}
 				}
+
+				const isCollapsed = plugin.__collapsedNodeIds.has(this.id);
+
+				if (isCollapsed) {
+					// ── FOLDED STATE ────────────────────────────────────────────────────────
+					// Redraw the half-disc every frame so that:
+					//   • the orientation tracks the parent as positions change during layout,
+					//   • any full-circle repaint by Obsidian (e.g. on hover) is overridden.
+					// This is bounded to the number of visible collapsed nodes, so it is
+					// acceptable in practice.
+					try {
+						// Measure the native base radius AND centre from the local geometry on
+						// first encounter (before we clear it). Both are cached per-instance.
+						// Obsidian draws the circle at a large local radius (~100) and uses the
+						// DisplayObject scale for sizing, so getSize() is wrong here.
+						// The centre must be captured because PIXI geometry is not necessarily
+						// centred on (0, 0) — drawing at (0, 0) would appear shifted by one
+						// radius. Fallbacks: radius=100, centre=(0, 0).
+						//
+						// Color: draw in white (0xffffff) so that Obsidian's per-frame `tint`
+						// on the DisplayObject applies the correct node colour (hover included),
+						// exactly as the native full circle does.
+						if (!this.__f2gBaseRadius) {
+							let r = 0;
+							let cx = 0;
+							let cy = 0;
+							if (typeof this.circle.getLocalBounds === "function") {
+								const b = this.circle.getLocalBounds();
+								r = Math.max(b.width, b.height) / 2;
+								cx = b.x + b.width / 2;
+								cy = b.y + b.height / 2;
+							}
+							this.__f2gBaseRadius = r > 0 && isFinite(r) ? r : 100;
+							this.__f2gBaseCenter = { x: cx, y: cy };
+						}
+						const baseRadius: number = this.__f2gBaseRadius;
+						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
+						const cx: number = baseCenter.x;
+						const cy: number = baseCenter.y;
+
+						// Determine the angle pointing toward the structural parent: the rounded
+						// side of the half-disc faces the parent (arc from angle − π/2 to
+						// angle + π/2). Renderer coordinates and PIXI arc angles share the same
+						// y-down convention, so atan2 gives the correct on-screen direction.
+						// Falls back to upward (−π/2) when the parent position is unavailable.
+						let angle = -Math.PI / 2;
+						const parentId = plugin.__structuralParent[this.id];
+						if (parentId !== undefined) {
+							// O(1) lookup through this.renderer.nodeLookup when available,
+							// falling back to a scan of this.renderer.nodes. Always read from
+							// the per-instance renderer — the prototype is shared across all
+							// graph leaves, so no renderer reference may be captured here.
+							const r = this.renderer;
+							let parentNode: { x: number; y: number } | undefined;
+							if (r?.nodeLookup) {
+								parentNode = r.nodeLookup[parentId];
+							} else if (r?.nodes) {
+								parentNode = r.nodes.find((n: { id: string }) => n.id === parentId);
+							}
+							if (parentNode) {
+								angle = Math.atan2(parentNode.y - this.y, parentNode.x - this.x);
+							}
+						}
+
+						this.circle.clear();
+						this.circle.beginFill(0xffffff, 1);
+						this.circle.moveTo(cx, cy);
+						this.circle.arc(cx, cy, baseRadius, angle - Math.PI / 2, angle + Math.PI / 2);
+						if (typeof this.circle.closePath === "function") {
+							this.circle.closePath();
+						}
+						this.circle.endFill();
+
+						this.__f2gHalfDrawn = true;
+					} catch (err) {
+						// Restore the normal circle if the custom drawing failed mid-way — a
+						// clear() without a successful redraw would leave the node invisible.
+						try {
+							originalRender.apply(this, args);
+						} catch (err2) {
+							// Silently ignore if originalRender also fails.
+						}
+					}
+				} else if (this.__f2gHalfDrawn) {
+					// ── TRANSITION: just unfolded ─── restore the full circle once. Obsidian
+					// does not redraw the circle geometry on its own, so a custom drawing
+					// persists until we replace it ourselves.
+					try {
+						const baseRadius: number = this.__f2gBaseRadius ?? 100;
+						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
+
+						this.circle.clear();
+						this.circle.beginFill(0xffffff, 1);
+						if (typeof this.circle.drawCircle === "function") {
+							this.circle.drawCircle(baseCenter.x, baseCenter.y, baseRadius);
+						} else {
+							this.circle.moveTo(baseCenter.x, baseCenter.y);
+							this.circle.arc(baseCenter.x, baseCenter.y, baseRadius, 0, 2 * Math.PI);
+						}
+						this.circle.endFill();
+					} catch (err) {
+						try {
+							originalRender.apply(this, args);
+						} catch (err2) {
+							// Silently ignore if originalRender also fails.
+						}
+					}
+					this.__f2gHalfDrawn = false;
+				}
 			};
 		}
 
