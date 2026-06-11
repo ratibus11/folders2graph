@@ -30,6 +30,7 @@ export default class Folders2GraphPlugin extends Plugin {
 		nodeColor: "#5c8af5",
 		showHeadingNodes: false,
 		headingNodeColor: "#f5a55c",
+		hiddenNodes: {},
 	};
 
 	/** IDs of folder nodes currently injected into the graph. Used to identify folder
@@ -39,6 +40,28 @@ export default class Folders2GraphPlugin extends Plugin {
 
 	/** Original `workspace.openLinkText` saved when we wrap it, so we can restore on unload. */
 	private __originalOpenLinkText: Nullable<Workspace["openLinkText"]> = null;
+
+	/** Structural children map: for every node ID, the list of IDs that are its direct
+	 * structural children (sub-folders, direct files, or headings). Populated explicitly
+	 * at the exact points where hierarchy links are created in setData. */
+	private __structuralChildren: Record<string, string[]> = {};
+
+	/** Inverse of `__structuralChildren`: maps each child node ID to its structural parent.
+	 * Populated alongside `__structuralChildren` for O(1) parent lookups. */
+	private __structuralParent: Record<string, string> = {};
+
+	/** Full set of node IDs present in the last complete graph data, used for purging
+	 * stale entries from `settings.hiddenNodes` and for validating Shift+click targets. */
+	private __allNodeIds: Set<string> = new Set();
+
+	/** Pre-computed set of node IDs that are currently fully collapsed (all structural
+	 * descendants are in `settings.hiddenNodes`). Updated in setData for O(1) frame-time
+	 * lookups in the render patch. */
+	private __collapsedNodeIds: Set<string> = new Set();
+
+	/** Serialised save queue — every saveData call is chained so concurrent saves never
+	 * race. Always append to this promise; never await it directly. */
+	private __savePromise: Promise<void> = Promise.resolve();
 
 	/**
 	 * Triggered when the plugin is loaded.
@@ -241,6 +264,10 @@ export default class Folders2GraphPlugin extends Plugin {
 			// behind that would still hijack `openLinkText`.
 			this.__folderNodeIds.clear();
 
+			// Reset structural maps before (re)building them during this setData.
+			this.__structuralChildren = {};
+			this.__structuralParent = {};
+
 			if (this.settings.showFolderNodes) {
 				const folders = new Set("/");
 
@@ -264,11 +291,14 @@ export default class Folders2GraphPlugin extends Plugin {
 					this.__folderNodeIds.add(folder);
 				});
 
-				// Add the links between the nodes and the folders.
+				// Add the links between the nodes and the folders, and register structural
+				// parent→child relationships explicitly.
 				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
 					if (nodeData.type != FOLDER_NODE_TAG || nodeData.folderNode) {
 						const directParent = this.__getNodeParentFolder(nodeId);
 						data.nodes[directParent].links[nodeId] = true;
+						// Register structural hierarchy.
+						this.__addStructuralChild(directParent, nodeId);
 					}
 				});
 
@@ -287,6 +317,45 @@ export default class Folders2GraphPlugin extends Plugin {
 				sourceNodeIds.forEach((nodeId) => this.__injectHeadingNodesForFile(data, nodeId));
 			}
 
+			// Record the complete graph state (post-injection, pre-filter) for fold logic
+			// and for validating Shift+click targets in the openLinkText wrapper.
+			this.__allNodeIds = new Set(Object.keys(data.nodes));
+
+			// Purge stale entries from hiddenNodes based on vault existence, NOT on what is
+			// currently rendered. Purging against the rendered graph would incorrectly remove
+			// all heading entries when showHeadingNodes is off, or all sub-folder entries when
+			// showFolderNodes is off — corrupting the collapsed state for the next re-enable.
+			// A conservative approach is used: when an ID format is unrecognised, we keep it
+			// rather than risk destroying user state (a superfluous entry is harmless; a wrong
+			// purge is destructive).
+			let purged = false;
+			for (const id of Object.keys(this.settings.hiddenNodes)) {
+				if (!this.__isNodeIdValidInVault(id)) {
+					delete this.settings.hiddenNodes[id];
+					purged = true;
+				}
+			}
+			if (purged) {
+				// Serialised save — does not block rendering.
+				this.saveSettings();
+			}
+
+			// Pre-compute the collapsed set for O(1) frame-time lookups.
+			this.__collapsedNodeIds = this.__computeCollapsedSet();
+
+			// Filter hidden nodes from the data before passing to the renderer.
+			for (const id of Object.keys(this.settings.hiddenNodes)) {
+				delete data.nodes[id];
+			}
+			// Also remove links pointing to hidden nodes from every remaining node.
+			for (const nodeData of Object.values(data.nodes)) {
+				for (const targetId of Object.keys(nodeData.links)) {
+					if (this.settings.hiddenNodes[targetId]) {
+						delete nodeData.links[targetId];
+					}
+				}
+			}
+
 			const result = renderer.originalSetData(data);
 
 			this.__patchNodePrototype(renderer);
@@ -296,10 +365,85 @@ export default class Folders2GraphPlugin extends Plugin {
 	}
 
 	/**
+	 * Registers `childId` as a structural child of `parentId` in both the
+	 * `__structuralChildren` and `__structuralParent` maps.
+	 *
+	 * Self-relationships are ignored: the root folder `/` is its own computed parent
+	 * (`__getNodeParentFolder("/")` returns `/`), and registering it as its own child
+	 * would make folding the root hide the root node itself.
+	 */
+	private __addStructuralChild(parentId: string, childId: string): void {
+		if (parentId === childId) return;
+		if (!this.__structuralChildren[parentId]) {
+			this.__structuralChildren[parentId] = [];
+		}
+		this.__structuralChildren[parentId].push(childId);
+		this.__structuralParent[childId] = parentId;
+	}
+
+	/**
+	 * Returns all structural descendants of `nodeId` via an iterative depth-first traversal
+	 * of `__structuralChildren`. A `visited` Set guards against accidental cycles.
+	 */
+	private __getAllDescendants(nodeId: string): string[] {
+		const descendants: string[] = [];
+		const visited = new Set<string>();
+		const stack: string[] = [...(this.__structuralChildren[nodeId] ?? [])];
+
+		while (stack.length > 0) {
+			const current = stack.pop()!;
+			if (visited.has(current)) continue;
+			visited.add(current);
+			descendants.push(current);
+			const children = this.__structuralChildren[current];
+			if (children) {
+				for (const child of children) {
+					stack.push(child);
+				}
+			}
+		}
+
+		return descendants;
+	}
+
+	/**
+	 * Returns true if `nodeId` is fully collapsed: it has at least one structural child
+	 * and every descendant is present in `settings.hiddenNodes`.
+	 * For frame-time use, prefer `__collapsedNodeIds.has(nodeId)` after setData.
+	 */
+	private __isNodeCollapsed(nodeId: string): boolean {
+		const children = this.__structuralChildren[nodeId];
+		if (!children || children.length === 0) return false;
+		const descendants = this.__getAllDescendants(nodeId);
+		if (descendants.length === 0) return false;
+		return descendants.every((id) => this.settings.hiddenNodes[id]);
+	}
+
+	/**
+	 * Builds the full set of collapsed node IDs from the current `__structuralChildren` and
+	 * `settings.hiddenNodes`. Called once per setData so frame-time rendering can do O(1)
+	 * `__collapsedNodeIds.has(id)` lookups instead of recomputing per node per frame.
+	 */
+	private __computeCollapsedSet(): Set<string> {
+		const collapsed = new Set<string>();
+		for (const nodeId of Object.keys(this.__structuralChildren)) {
+			if (this.__isNodeCollapsed(nodeId)) {
+				collapsed.add(nodeId);
+			}
+		}
+		return collapsed;
+	}
+
+	/**
 	 * For a given source node, reads its Markdown headings and inserts a heading node per heading,
 	 * linking each link / embed found in the file to the heading it lives under (the closest
 	 * heading above it). Heading node IDs follow Obsidian's wikilink format `path#heading` so
 	 * a default click on the node opens the source note at that section.
+	 *
+	 * Structural relationships registered here:
+	 * - file → root heading (heading with no ancestor in this file)
+	 * - heading → direct sub-heading
+	 * Non-structural links (refs/embeds from a heading to another file) are NOT registered.
 	 */
 	private __injectHeadingNodesForFile(data: RendererData, nodeId: string): void {
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
@@ -334,10 +478,14 @@ export default class Folders2GraphPlugin extends Plugin {
 				? this.__buildHeadingNodeId(nodeId, parent.heading)
 				: nodeId;
 			data.nodes[parentId].links[headingId] = true;
+			// Register structural relationship (file→heading or heading→sub-heading).
+			this.__addStructuralChild(parentId, headingId);
 			ancestors.push(h);
 		});
 
 		// Attach each referenced note to the heading that contains the reference.
+		// These are NOT structural relationships (a heading linking to another file is a
+		// content link, not a hierarchy link).
 		refs.forEach((ref) => {
 			const owning = this.__findOwningHeading(headings, ref.position.start.line);
 			if (!owning) return;
@@ -395,9 +543,12 @@ export default class Folders2GraphPlugin extends Plugin {
 
 	/**
 	 * Patches the Node class prototype so every node instance — current and future —
-	 * returns the configured color for folder nodes. Patching the prototype (rather than
-	 * each instance) ensures the override survives node recreations triggered by Obsidian
-	 * (e.g. toggling orphans, tag filters) without going through our custom `setData`.
+	 * returns the configured color for folder nodes, the configured color for heading nodes,
+	 * (best effort) renders collapsed nodes as a semi-circle, and intercepts Shift+right-click
+	 * to trigger recursive unfold.
+	 *
+	 * Patching the prototype (rather than each instance) ensures the override survives node
+	 * recreations triggered by Obsidian without going through our custom `setData`.
 	 */
 	private __patchNodePrototype(renderer: LeafRenderer): void {
 		if (renderer.nodes.length === 0) return;
@@ -438,10 +589,12 @@ export default class Folders2GraphPlugin extends Plugin {
 
 	/**
 	 * Extracts the heading portion of a heading node ID (`path#heading` → `heading`).
+	 * Uses `indexOf` (first `#`) so that headings whose text itself contains `#` are
+	 * handled consistently — such IDs are a known degraded case.
 	 * Falls back to the full ID when no `#` is present.
 	 */
 	private __extractHeadingFromNodeId(nodeId: string): string {
-		const idx = nodeId.lastIndexOf("#");
+		const idx = nodeId.indexOf("#");
 		return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
 	}
 
@@ -514,6 +667,56 @@ export default class Folders2GraphPlugin extends Plugin {
 	}
 
 	/**
+	 * Returns true if a node ID stored in `settings.hiddenNodes` still corresponds to a
+	 * real vault item, independent of the current `showFolderNodes`/`showHeadingNodes`
+	 * toggles. This allows the purge to run without being influenced by which node types
+	 * are currently rendered.
+	 *
+	 * Rules by ID format:
+	 * - Folder IDs start with `/` (or equal `/`): `/` is always valid (vault root);
+	 *   others are valid when `app.vault.getAbstractFileByPath(id.slice(1))` returns a
+	 *   TFolder.
+	 * - Heading IDs contain `#`: the portion before the first `#` must resolve to a file
+	 *   via `metadataCache.getFirstLinkpathDest`, AND the portion after the first `#` must
+	 *   appear as a heading text in that file's cache.
+	 * - Everything else (plain file IDs): valid when either
+	 *   `metadataCache.getFirstLinkpathDest(id, "")` or `vault.getAbstractFileByPath(id)`
+	 *   returns a non-null result. The graph may store IDs as full paths or as basenames
+	 *   without extension, so both lookups are tried.
+	 *
+	 * When in doubt the method returns `true` (conservative: keep the entry). A superfluous
+	 * entry in hiddenNodes is invisible to the user; a premature purge destroys their
+	 * carefully arranged collapsed state.
+	 */
+	private __isNodeIdValidInVault(id: string): boolean {
+		// Folder node: starts with `/`.
+		if (id.startsWith("/")) {
+			if (id === "/") return true; // Vault root is always present.
+			const vaultPath = id.slice(1);
+			const item = this.app.vault.getAbstractFileByPath(vaultPath);
+			return item instanceof TFolder;
+		}
+
+		// Heading node: contains `#`.
+		const hashIdx = id.indexOf("#");
+		if (hashIdx >= 0) {
+			const filePart = id.slice(0, hashIdx);
+			const headingText = id.slice(hashIdx + 1);
+			const file = this.app.metadataCache.getFirstLinkpathDest(filePart, "");
+			if (!file) return false;
+			const headings = this.app.metadataCache.getFileCache(file)?.headings;
+			if (!headings) return false;
+			return headings.some((h) => h.heading === headingText);
+		}
+
+		// Plain file node: try linkpath resolution first (handles basenames without ext),
+		// then a direct path lookup (native graph uses full paths as IDs).
+		if (this.app.metadataCache.getFirstLinkpathDest(id, "") !== null) return true;
+		if (this.app.vault.getAbstractFileByPath(id) !== null) return true;
+		return false;
+	}
+
+	/**
 	 * Refresh settings and apply them to `this.settings`.
 	 */
 	private async __loadSettings() {
@@ -521,10 +724,16 @@ export default class Folders2GraphPlugin extends Plugin {
 	}
 
 	/**
-	 * Call the Obsidian API to save the settings.
+	 * Call the Obsidian API to save the settings. All calls are serialised through
+	 * `__savePromise` so concurrent invocations never race each other.
 	 */
-	public async saveSettings() {
-		await this.saveData(this.settings);
+	public saveSettings(): Promise<void> {
+		this.__savePromise = this.__savePromise
+			.then(() => this.saveData(this.settings))
+			.catch((err: unknown) => {
+				console.error("folders2graph: failed to save settings", err);
+			});
+		return this.__savePromise;
 	}
 
 	/**
