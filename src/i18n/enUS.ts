@@ -1,5 +1,12 @@
 import { I18n } from "types/I18n";
 
+/**
+ * English (United States) locale strings.
+ *
+ * @remarks
+ * Used as the default locale when no matching language code is found in
+ * `localStorage`.
+ */
 export const enUS: I18n = {
 	settings: {
 		showFolderNodes: {
@@ -29,6 +36,9 @@ export const enUS: I18n = {
 		},
 		toggleHeadingNodes: {
 			name: "Show or hide heading nodes",
+		},
+		unfoldAllNodes: {
+			name: "Unfold all graph nodes",
 		},
 	},
 };

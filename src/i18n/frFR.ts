@@ -1,5 +1,11 @@
 import { I18n } from "types/I18n";
 
+/**
+ * French (France) locale strings.
+ *
+ * @remarks
+ * Selected when `localStorage.getItem("language")` returns `"fr"`.
+ */
 export const frFR: I18n = {
 	settings: {
 		showFolderNodes: {
@@ -29,6 +35,9 @@ export const frFR: I18n = {
 		},
 		toggleHeadingNodes: {
 			name: "Afficher ou masquer les nœuds de titre",
+		},
+		unfoldAllNodes: {
+			name: "Déplier tous les nœuds du graphe",
 		},
 	},
 };

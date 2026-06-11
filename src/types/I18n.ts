@@ -1,4 +1,12 @@
+/**
+ * Structure of the internationalisation object used throughout the plugin.
+ *
+ * @remarks
+ * Each locale module (`enUS`, `frFR`) exports a value that satisfies this type.
+ * The active locale is resolved at runtime by `getI18n` from `i18n/index.ts`.
+ */
 export type I18n = {
+	/** Strings used in the settings tab. */
 	settings: {
 		showFolderNodes: {
 			name: string;
@@ -21,11 +29,15 @@ export type I18n = {
 			desc: string;
 		};
 	};
+	/** Strings used for registered Obsidian commands. */
 	commands: {
 		toggleFolderNodes: {
 			name: string;
 		};
 		toggleHeadingNodes: {
+			name: string;
+		};
+		unfoldAllNodes: {
 			name: string;
 		};
 	};
