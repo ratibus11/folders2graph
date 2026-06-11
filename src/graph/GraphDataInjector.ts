@@ -1,0 +1,335 @@
+import { App, HeadingCache, TFile, getLinkpath } from "obsidian";
+import { RendererData } from "interfaces/RendererData";
+import { LeafRenderer } from "interfaces/LeafRenderer";
+import { Settings } from "interfaces/Settings";
+import { Nullable } from "types/Nullable";
+import { StructuralHierarchy } from "graph/StructuralHierarchy";
+import { FoldingManager } from "graph/FoldingManager";
+
+const FOLDER_NODE_TAG = "f2g_node";
+const HEADING_NODE_TAG = "f2g_heading_node";
+
+/**
+ * Injects folder nodes and heading nodes into the graph data before it is
+ * passed to Obsidian's native renderer.
+ *
+ * This class is responsible for:
+ * - Enumerating parent folder paths from existing node IDs and inserting a
+ *   virtual folder node for each.
+ * - Wiring structural links between folders, files, and headings.
+ * - Injecting heading nodes derived from each Markdown file's metadata cache.
+ * - Filtering out hidden nodes (from `settings.hiddenNodes`) before the data
+ *   reaches the renderer.
+ * - Triggering the structural hierarchy rebuild and the purge of stale entries
+ *   on every setData call.
+ */
+export class GraphDataInjector {
+	private app: App;
+	private settings: Settings;
+	private hierarchy: StructuralHierarchy;
+	private foldingManager: FoldingManager;
+	private save: () => Promise<void>;
+
+	/** IDs of folder nodes currently injected into the graph. Written here so
+	 * `GraphInteractions` can read it via `getFolderNodeIds()` without
+	 * introducing a circular dependency. */
+	private folderNodeIds: Set<string> = new Set();
+
+	/** Full set of node IDs present in the last complete graph data, used for
+	 * validating Shift+click targets in the openLinkText wrapper. */
+	private allNodeIds: Set<string> = new Set();
+
+	constructor(
+		app: App,
+		settings: Settings,
+		hierarchy: StructuralHierarchy,
+		foldingManager: FoldingManager,
+		save: () => Promise<void>,
+	) {
+		this.app = app;
+		this.settings = settings;
+		this.hierarchy = hierarchy;
+		this.foldingManager = foldingManager;
+		this.save = save;
+	}
+
+	/** Returns the set of injected folder node IDs for the last graph data pass. */
+	getFolderNodeIds(): Set<string> {
+		return this.folderNodeIds;
+	}
+
+	/** Returns the full set of all node IDs from the last graph data pass. */
+	getAllNodeIds(): Set<string> {
+		return this.allNodeIds;
+	}
+
+	/**
+	 * Installs the custom `setData` override on `renderer`. The original
+	 * `setData` is saved as `renderer.originalSetData` so it can be restored
+	 * on plugin unload.
+	 *
+	 * The override:
+	 * 1. Injects folder nodes (when `settings.showFolderNodes` is true).
+	 * 2. Injects heading nodes (when `settings.showHeadingNodes` is true).
+	 * 3. Purges stale `hiddenNodes` entries against the vault.
+	 * 4. Computes the collapsed set for O(1) frame-time lookups.
+	 * 5. Filters hidden nodes from the data.
+	 * 6. Calls the original `setData`.
+	 * 7. Triggers the prototype patch callback so rendering overrides are
+	 *    applied after the node list is populated.
+	 *
+	 * @param renderer The graph leaf renderer to patch.
+	 * @param onAfterSetData Callback invoked after the original `setData` runs;
+	 *   used by the plugin to apply the node prototype patch.
+	 */
+	install(renderer: LeafRenderer, onAfterSetData: (renderer: LeafRenderer) => void): void {
+		if (renderer.originalSetData == undefined) {
+			renderer.originalSetData = renderer.setData;
+		}
+
+		renderer.setData = (data: RendererData) => {
+			if (!renderer.originalSetData) {
+				throw new Error("originalSetData is undefined.");
+			}
+
+			// Clear tracked folder node IDs so a toggle-off leaves no stale
+			// entries behind that would hijack `openLinkText`.
+			this.folderNodeIds.clear();
+
+			// Reset structural maps before (re)building them during this setData.
+			this.hierarchy.reset();
+
+			if (this.settings.showFolderNodes) {
+				const folders = new Set("/");
+
+				// Collect all ancestor folder paths for every existing node.
+				// e.g. "folder/subfolder/file.md" → ["/", "/folder", "/folder/subfolder"]
+				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
+					const nodeSubFolders = this.getNodeParentFolders(nodeId);
+
+					if (!nodeData.folderNode && nodeData.type != FOLDER_NODE_TAG && nodeSubFolders != null) {
+						nodeSubFolders.forEach(folders.add, folders);
+					}
+				});
+
+				// Add a virtual node for each folder path.
+				folders.forEach((folder) => {
+					data.nodes[folder] = {
+						type: FOLDER_NODE_TAG,
+						links: {},
+						folderNode: true,
+					};
+					this.folderNodeIds.add(folder);
+				});
+
+				// Wire each node to its direct parent folder and register the
+				// structural parent→child relationship.
+				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
+					if (nodeData.type != FOLDER_NODE_TAG || nodeData.folderNode) {
+						const directParent = this.getNodeParentFolder(nodeId);
+						data.nodes[directParent].links[nodeId] = true;
+						this.hierarchy.addChild(directParent, nodeId);
+					}
+				});
+
+				if (this.settings.hideRootNode && data.nodes["/"]) {
+					delete data.nodes["/"];
+				}
+			}
+
+			if (this.settings.showHeadingNodes) {
+				// Snapshot the file-like node IDs before injection so we don't
+				// iterate over the folder/heading nodes we just added.
+				const sourceNodeIds = Object.keys(data.nodes).filter((nodeId) => {
+					const nodeData = data.nodes[nodeId];
+					return nodeData.type !== FOLDER_NODE_TAG && nodeData.type !== HEADING_NODE_TAG;
+				});
+				sourceNodeIds.forEach((nodeId) => this.injectHeadingNodesForFile(data, nodeId));
+			}
+
+			// Record the complete graph state (post-injection, pre-filter) for
+			// fold logic and for validating Shift+click targets.
+			this.allNodeIds = new Set(Object.keys(data.nodes));
+
+			// Purge stale entries from hiddenNodes based on vault existence.
+			if (this.foldingManager.purge()) {
+				// Serialised save — does not block rendering.
+				this.save();
+			}
+
+			// Pre-compute the collapsed set for O(1) frame-time lookups.
+			this.hierarchy.computeCollapsedSet();
+
+			// Filter hidden nodes from the data before passing to the renderer.
+			for (const id of Object.keys(this.settings.hiddenNodes)) {
+				delete data.nodes[id];
+			}
+			// Also remove links pointing to hidden nodes from every remaining node.
+			for (const nodeData of Object.values(data.nodes)) {
+				for (const targetId of Object.keys(nodeData.links)) {
+					if (this.settings.hiddenNodes[targetId]) {
+						delete nodeData.links[targetId];
+					}
+				}
+			}
+
+			const result = renderer.originalSetData(data);
+
+			onAfterSetData(renderer);
+
+			return result;
+		};
+	}
+
+	/**
+	 * For a given source node, reads its Markdown headings and inserts a
+	 * heading node per heading, linking each link / embed found in the file
+	 * to the heading it lives under (the closest heading above it). Heading
+	 * node IDs follow Obsidian's wikilink format `path#heading` so a default
+	 * click on the node opens the source note at that section.
+	 *
+	 * Structural relationships registered here:
+	 * - file → root heading (heading with no ancestor in this file)
+	 * - heading → direct sub-heading
+	 * Non-structural links (refs/embeds from a heading to another file) are
+	 * NOT registered.
+	 */
+	private injectHeadingNodesForFile(data: RendererData, nodeId: string): void {
+		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
+		if (!file || file.extension !== "md") return;
+
+		const cache = this.app.metadataCache.getFileCache(file);
+		if (!cache || !cache.headings || cache.headings.length === 0) return;
+
+		const headings = cache.headings;
+		const refs = [...(cache.links ?? []), ...(cache.embeds ?? [])];
+
+		// Create one node per heading.
+		headings.forEach((h) => {
+			const headingId = this.buildHeadingNodeId(nodeId, h.heading);
+			data.nodes[headingId] = {
+				type: HEADING_NODE_TAG,
+				links: {},
+			};
+		});
+
+		// Wire the heading hierarchy: each heading is attached to the nearest
+		// preceding heading of strictly lower level. Root headings (no such
+		// ancestor) are attached to the source note. Obsidian guarantees
+		// `headings` is in document order, so a stack is enough.
+		const ancestors: HeadingCache[] = [];
+		headings.forEach((h) => {
+			while (ancestors.length > 0 && ancestors[ancestors.length - 1].level >= h.level) {
+				ancestors.pop();
+			}
+			const headingId = this.buildHeadingNodeId(nodeId, h.heading);
+			const parent = ancestors[ancestors.length - 1];
+			const parentId = parent
+				? this.buildHeadingNodeId(nodeId, parent.heading)
+				: nodeId;
+			data.nodes[parentId].links[headingId] = true;
+			// Register structural relationship (file→heading or heading→sub-heading).
+			this.hierarchy.addChild(parentId, headingId);
+			ancestors.push(h);
+		});
+
+		// Attach each referenced note to the heading that contains the reference.
+		// These are NOT structural relationships.
+		refs.forEach((ref) => {
+			const owning = this.findOwningHeading(headings, ref.position.start.line);
+			if (!owning) return;
+
+			const dest = this.app.metadataCache.getFirstLinkpathDest(
+				getLinkpath(ref.link),
+				file.path,
+			);
+			if (!dest) return;
+
+			const linkedNodeId = this.resolveGraphNodeId(data, dest);
+			if (!linkedNodeId) return;
+
+			const headingId = this.buildHeadingNodeId(nodeId, owning.heading);
+			data.nodes[headingId].links[linkedNodeId] = true;
+		});
+	}
+
+	/**
+	 * Returns the heading whose start line is the closest above (or equal to)
+	 * `line`. Headings are assumed to be sorted by position (Obsidian
+	 * guarantees document order).
+	 */
+	private findOwningHeading(headings: HeadingCache[], line: number): Nullable<HeadingCache> {
+		let owning: Nullable<HeadingCache> = null;
+		for (const h of headings) {
+			if (h.position.start.line <= line) {
+				owning = h;
+			} else {
+				break;
+			}
+		}
+		return owning;
+	}
+
+	/**
+	 * Builds the heading node ID, matching Obsidian's wikilink syntax
+	 * (`path#heading`) so default click handling opens the note at the
+	 * corresponding section.
+	 */
+	buildHeadingNodeId(sourceNodeId: string, heading: string): string {
+		return `${sourceNodeId}#${heading}`;
+	}
+
+	/**
+	 * Resolves a destination TFile to its corresponding graph node ID. The
+	 * graph stores nodes either by their full path or by their basename for
+	 * ghost links, so both candidates are tried and the path is used as
+	 * fallback.
+	 */
+	private resolveGraphNodeId(data: RendererData, dest: TFile): Nullable<string> {
+		if (data.nodes[dest.path]) return dest.path;
+		const noExt = dest.extension === "md" ? dest.path.slice(0, -3) : dest.path;
+		if (data.nodes[noExt]) return noExt;
+		if (data.nodes[dest.basename]) return dest.basename;
+		return dest.path;
+	}
+
+	/**
+	 * Returns each ancestor folder path of `nodeId` as a `/`-prefixed string,
+	 * including the vault root `/`.
+	 *
+	 * @example
+	 * const nodeId = "folder/subfolder/file.md";
+	 * const result = getNodeParentFolders(nodeId);
+	 * // result = ["/", "/folder", "/folder/subfolder"]
+	 */
+	getNodeParentFolders(nodeId: string): string[] {
+		const subFolders = ["/"];
+
+		const splittedNodeId = nodeId.split("/");
+		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1);
+
+		let currentFolder = "";
+		subFoldersSteps.forEach((subfolder) => {
+			currentFolder += "/" + subfolder;
+			subFolders.push(currentFolder);
+		});
+
+		return subFolders;
+	}
+
+	/**
+	 * Returns the direct parent folder path of `nodeId` as a `/`-prefixed
+	 * string. The vault root `/` is its own parent.
+	 *
+	 * @example
+	 * const nodeId = "folder/subfolder/file.md";
+	 * const result = getNodeParentFolder(nodeId);
+	 * // result = "/folder/subfolder"
+	 */
+	getNodeParentFolder(nodeId: string): string {
+		const splittedNodeId = nodeId.split("/");
+		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1).filter((e) => e != "");
+
+		return `/${subFoldersSteps.join("/")}`;
+	}
+}

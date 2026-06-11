@@ -13,7 +13,8 @@
 			"SettingsTab": ["./src/SettingsTab.ts"],
 			"i18n": ["./src/i18n/index.ts"],
 			"interfaces/*": ["./src/interfaces/*"],
-			"types/*": ["./src/types/*"]
+			"types/*": ["./src/types/*"],
+			"graph/*": ["./src/graph/*"]
 		},
 
 		"skipLibCheck": true,
