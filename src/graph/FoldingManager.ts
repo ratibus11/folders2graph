@@ -61,6 +61,27 @@ export class FoldingManager {
 	 *
 	 * A single descendant traversal is used to derive the folded state and to
 	 * apply the change.
+	 *
+	 * @example
+	 * // Case 1 — all descendants visible → fold (hide all descendants).
+	 * // Hierarchy: /notes → notes/a.md, notes/b.md
+	 * // Before: hiddenNodes = {}
+	 * foldingManager.handleFoldToggle("/notes");
+	 * // After:  hiddenNodes = { "notes/a.md": true, "notes/b.md": true }
+	 *
+	 * @example
+	 * // Case 2 — partially visible → fold (same behaviour as case 1).
+	 * // Before: hiddenNodes = { "notes/a.md": true }
+	 * foldingManager.handleFoldToggle("/notes");
+	 * // After:  hiddenNodes = { "notes/a.md": true, "notes/b.md": true }
+	 *
+	 * @example
+	 * // Case 3 — fully folded → unfold ONE level (direct children only).
+	 * // Hierarchy: /notes → notes/sub (which itself has notes/sub/deep.md hidden)
+	 * // Before: hiddenNodes = { "notes/sub": true, "notes/sub/deep.md": true }
+	 * foldingManager.handleFoldToggle("/notes");
+	 * // After:  hiddenNodes = { "notes/sub/deep.md": true }
+	 * // notes/sub is now visible but remains collapsed (its child is still hidden).
 	 */
 	handleFoldToggle(nodeId: string): void {
 		const children = this.hierarchy.getChildren(nodeId);
@@ -94,6 +115,14 @@ export class FoldingManager {
 	 * folded, or mixed). No-op when nothing is hidden under `nodeId`.
 	 *
 	 * @param nodeId The node that was Shift+right-clicked.
+	 *
+	 * @example
+	 * // Mixed hidden state: /src → src/api (hidden) → src/api/index.md (hidden)
+	 * //                           src/utils.md (visible)
+	 * // Before: hiddenNodes = { "src/api": true, "src/api/index.md": true }
+	 * foldingManager.handleRecursiveUnfold("/src");
+	 * // After:  hiddenNodes = {}
+	 * // All hidden descendants revealed in one shot, regardless of nesting depth.
 	 */
 	handleRecursiveUnfold(nodeId: string): void {
 		const toUnhide = this.hierarchy
@@ -161,6 +190,33 @@ export class FoldingManager {
 	 *   `vault.getAbstractFileByPath(id)` returns a non-null result. Both are
 	 *   tried because the graph stores IDs either as full paths or as basenames
 	 *   without extension.
+	 *
+	 * @example
+	 * // Folder ID — vault root is always valid.
+	 * foldingManager.isNodeIdValidInVault("/");
+	 * // true
+	 *
+	 * @example
+	 * // Folder ID — arbitrary sub-folder (valid when the TFolder exists in vault).
+	 * foldingManager.isNodeIdValidInVault("/projects/2024");
+	 * // true   when vault contains the folder  projects/2024
+	 * // false  when the folder has been deleted or renamed
+	 *
+	 * @example
+	 * // Heading ID — file part + heading text are both validated.
+	 * foldingManager.isNodeIdValidInVault("journal/2024-01-15#Daily note");
+	 * // true   when  journal/2024-01-15.md  exists and has a heading "Daily note"
+	 * // false  when the file or heading is missing
+	 *
+	 * @example
+	 * // Plain file ID stored as basename (ghost link / unique-name vault).
+	 * foldingManager.isNodeIdValidInVault("readme");
+	 * // true  when  getFirstLinkpathDest("readme", "")  resolves to a TFile
+	 *
+	 * @example
+	 * // Plain file ID stored as full path.
+	 * foldingManager.isNodeIdValidInVault("folder/note.md");
+	 * // true  when  vault.getAbstractFileByPath("folder/note.md")  is non-null
 	 */
 	isNodeIdValidInVault(id: string): boolean {
 		// Folder node: starts with `/`.

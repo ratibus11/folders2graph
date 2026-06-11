@@ -64,6 +64,17 @@ export class StructuralHierarchy {
 	 * computed parent (`getNodeParentFolder("/")` returns `/`), and registering
 	 * it as its own child would cause folding the root to hide the root node
 	 * itself.
+	 *
+	 * @example
+	 * // Register a folder → file relationship.
+	 * hierarchy.addChild("/projects", "projects/tasks.md");
+	 * // hierarchy.getChildren("/projects") = ["projects/tasks.md"]
+	 * // hierarchy.getParent("projects/tasks.md") = "/projects"
+	 *
+	 * @example
+	 * // Self-reference (vault root) is silently ignored.
+	 * hierarchy.addChild("/", "/");
+	 * // hierarchy.getChildren("/") = []  (unchanged)
 	 */
 	addChild(parentId: string, childId: string): void {
 		if (parentId === childId) return;
@@ -86,6 +97,20 @@ export class StructuralHierarchy {
 	 * A `visited` Set guards against accidental cycles in the children map,
 	 * which should never occur in normal use but could arise from corrupted
 	 * state.
+	 *
+	 * @example
+	 * // Given the tree:  /work  →  work/project  →  work/project/note.md
+	 * //                                           →  work/project/readme.md
+	 * hierarchy.addChild("/work", "work/project");
+	 * hierarchy.addChild("work/project", "work/project/note.md");
+	 * hierarchy.addChild("work/project", "work/project/readme.md");
+	 *
+	 * const result = hierarchy.getAllDescendants("/work");
+	 * // result contains ["work/project", "work/project/readme.md", "work/project/note.md"]
+	 * // (DFS order; exact ordering depends on stack pop sequence)
+	 *
+	 * const empty = hierarchy.getAllDescendants("work/project/note.md");
+	 * // empty = []
 	 */
 	getAllDescendants(nodeId: string): string[] {
 		const descendants: string[] = [];
@@ -156,6 +181,21 @@ export class StructuralHierarchy {
 	 * Called once per `setData` pass by `GraphDataInjector` so that
 	 * `NodePrototypePatcher`'s render override can do O(1)
 	 * `isCollapsed(id)` lookups instead of recomputing per node per frame.
+	 *
+	 * @example
+	 * // Hierarchy: /src → src/index.md, src/utils.md
+	 * // hiddenNodes = { "src/index.md": true, "src/utils.md": true }
+	 * // (all descendants of "/src" are hidden)
+	 *
+	 * hierarchy.computeCollapsedSet();
+	 * hierarchy.isCollapsed("/src");
+	 * // true  — both children are hidden
+	 *
+	 * // If only one child is hidden:
+	 * // hiddenNodes = { "src/index.md": true }
+	 * hierarchy.computeCollapsedSet();
+	 * hierarchy.isCollapsed("/src");
+	 * // false — src/utils.md is still visible
 	 */
 	computeCollapsedSet(): void {
 		const collapsed = new Set<string>();
@@ -177,6 +217,14 @@ export class StructuralHierarchy {
 	 * Only accurate after `computeCollapsedSet` has been called for the
 	 * current graph data. Used in the PIXI render override to decide whether
 	 * to draw the half-disc.
+	 *
+	 * @example
+	 * // After computeCollapsedSet() with hiddenNodes covering all of /src's descendants:
+	 * hierarchy.isCollapsed("/src");
+	 * // true  — renders as a half-disc
+	 *
+	 * hierarchy.isCollapsed("src/index.md");
+	 * // false — leaf node (no children), never considered collapsed
 	 */
 	isCollapsed(nodeId: string): boolean {
 		return this.collapsedNodeIds.has(nodeId);
@@ -192,6 +240,19 @@ export class StructuralHierarchy {
 	 * Used by both the PIXI right-click wrapper (to decide whether to swallow
 	 * the gesture) and `FoldingManager.handleRecursiveUnfold` (to decide
 	 * whether there is anything to reveal).
+	 *
+	 * @example
+	 * // Hierarchy: /docs → docs/guide.md → docs/guide.md#Introduction
+	 * // hiddenNodes = { "docs/guide.md#Introduction": true }
+	 *
+	 * hierarchy.hasHiddenDescendant("/docs");
+	 * // true  — a grandchild is hidden
+	 *
+	 * hierarchy.hasHiddenDescendant("docs/guide.md");
+	 * // true  — a direct child (the heading node) is hidden
+	 *
+	 * hierarchy.hasHiddenDescendant("docs/guide.md#Introduction");
+	 * // false — leaf node, no descendants at all
 	 */
 	hasHiddenDescendant(nodeId: string): boolean {
 		return this.getAllDescendants(nodeId).some((id) => this.settings.hiddenNodes[id]);

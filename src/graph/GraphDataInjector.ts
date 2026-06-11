@@ -229,6 +229,21 @@ export class GraphDataInjector {
 	 *
 	 * Non-structural links (refs/embeds from a heading to another file) are
 	 * added as graph links but NOT registered in `StructuralHierarchy`.
+	 *
+	 * @example
+	 * // Source file "docs/guide" has two headings:
+	 * //   # Overview        (level 1)
+	 * //   ## Installation   (level 2, child of Overview)
+	 * //
+	 * // Before injection:
+	 * // data.nodes = { "docs/guide": { type: "", links: {}, ... } }
+	 * //
+	 * // After injectHeadingNodesForFile(data, "docs/guide"):
+	 * // data.nodes = {
+	 * //   "docs/guide":                    { type: "",                links: { "docs/guide#Overview": true } },
+	 * //   "docs/guide#Overview":           { type: "f2g_heading_node", links: { "docs/guide#Installation": true } },
+	 * //   "docs/guide#Installation":       { type: "f2g_heading_node", links: {} },
+	 * // }
 	 */
 	private injectHeadingNodesForFile(data: RendererData, nodeId: string): void {
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
@@ -323,6 +338,16 @@ export class GraphDataInjector {
 	 * @param sourceNodeId Graph node ID of the source file (e.g. `folder/note`).
 	 * @param heading      Raw heading text as it appears in the Markdown file.
 	 * @returns Heading node ID in the form `sourceNodeId#heading`.
+	 *
+	 * @example
+	 * const nodeId = buildHeadingNodeId("docs/api", "Getting Started");
+	 * // nodeId = "docs/api#Getting Started"
+	 *
+	 * @example
+	 * // Heading text that itself contains a `#` character (degraded case).
+	 * const nodeId = buildHeadingNodeId("notes/faq", "What is C#?");
+	 * // nodeId = "notes/faq#What is C#?"
+	 * // extractHeadingFromNodeId will stop at the first `#`, returning "What is C".
 	 */
 	private buildHeadingNodeId(sourceNodeId: string, heading: string): string {
 		return `${sourceNodeId}#${heading}`;
@@ -340,6 +365,20 @@ export class GraphDataInjector {
 	 * The graph stores nodes either by their full path (e.g. `folder/note.md`)
 	 * or by their basename for ghost links (e.g. `note`), so both candidates
 	 * are tried before falling back to the path.
+	 *
+	 * @example
+	 * // Node stored by full path (common in multi-folder vaults).
+	 * // data.nodes = { "projects/roadmap.md": { ... } }
+	 * // dest = { path: "projects/roadmap.md", basename: "roadmap", extension: "md" }
+	 * const id = resolveGraphNodeId(data, dest);
+	 * // id = "projects/roadmap.md"
+	 *
+	 * @example
+	 * // Ghost link stored by basename only (no matching file in the vault).
+	 * // data.nodes = { "roadmap": { ... } }
+	 * // dest = { path: "roadmap.md", basename: "roadmap", extension: "md" }
+	 * const id = resolveGraphNodeId(data, dest);
+	 * // id = "roadmap"  (basename match, path without extension)
 	 */
 	private resolveGraphNodeId(data: RendererData, dest: TFile): Nullable<string> {
 		if (data.nodes[dest.path]) return dest.path;

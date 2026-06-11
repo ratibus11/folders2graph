@@ -17,7 +17,20 @@ export type Settings = {
 	showHeadingNodes: boolean;
 	/** CSS hex colour string for heading nodes (e.g. `"#f5a55c"`). */
 	headingNodeColor: string;
-	/** Node IDs that are hidden because a structural ancestor was collapsed by the user.
-	 * Persists across restarts so the collapsed state survives a vault reload. */
+	/**
+	 * Node IDs that are hidden because a structural ancestor was collapsed by the user.
+	 * Persists across restarts so the collapsed state survives a vault reload.
+	 *
+	 * @example
+	 * // After the user Shift+clicks the "/projects" folder node to collapse it,
+	 * // and the "/projects/archive" sub-folder was already collapsed independently:
+	 * hiddenNodes = {
+	 *   "projects/roadmap.md": true,
+	 *   "projects/archive": true,
+	 *   "projects/archive/old-spec.md": true,
+	 * }
+	 * // Folder IDs are `/`-prefixed; file IDs are plain paths or basenames;
+	 * // heading IDs use the `path#heading` wikilink format.
+	 */
 	hiddenNodes: Record<string, boolean>;
 };

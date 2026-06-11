@@ -78,6 +78,16 @@ export class NodePrototypePatcher {
 	 *
 	 * A no-op when `renderer.nodes` is empty or the prototype already carries
 	 * the `__f2gPatched` flag.
+	 *
+	 * @example
+	 * // Half-disc orientation: the rounded side faces the structural parent.
+	 * // If the collapsed node sits at (100, 200) and its parent is at (100, 50),
+	 * // the parent is directly above → angle = Math.atan2(50 - 200, 100 - 100) = -π/2
+	 * // Arc drawn from -π/2 − π/2 = -π  to  -π/2 + π/2 = 0  (upper half-disc).
+	 * //
+	 * // If the parent is to the right at (300, 200):
+	 * // angle = Math.atan2(200 - 200, 300 - 100) = 0
+	 * // Arc drawn from -π/2  to  π/2  (right-facing half-disc).
 	 */
 	patch(renderer: LeafRenderer): void {
 		if (renderer.nodes.length === 0) return;
@@ -407,6 +417,20 @@ export class NodePrototypePatcher {
 	 * Uses `indexOf` (first `#`) so that headings whose text itself contains
 	 * `#` characters are handled consistently — such IDs are a known degraded
 	 * case where the heading text will be truncated at the second `#`.
+	 *
+	 * @example
+	 * const label = extractHeadingFromNodeId("docs/guide#Getting Started");
+	 * // label = "Getting Started"
+	 *
+	 * @example
+	 * // Degraded case: heading text contains a `#` character.
+	 * const label = extractHeadingFromNodeId("notes/faq#What is C#?");
+	 * // label = "What is C"  — truncated at the second `#`
+	 *
+	 * @example
+	 * // No `#` present — full nodeId returned (should not occur for heading nodes).
+	 * const label = extractHeadingFromNodeId("docs/guide");
+	 * // label = "docs/guide"
 	 */
 	private extractHeadingFromNodeId(nodeId: string): string {
 		const idx = nodeId.indexOf("#");
