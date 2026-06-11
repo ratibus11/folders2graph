@@ -33,4 +33,16 @@ export type Settings = {
 	 * // heading IDs use the `path#heading` wikilink format.
 	 */
 	hiddenNodes: Record<string, boolean>;
+	/**
+	 * When `true`, the display size of a node reflects all of its visible
+	 * structural descendants at every depth, not just its direct visible children.
+	 * Folding a node causes its descendants to disappear, which reduces its
+	 * weight and therefore its size. Defaults to `false`.
+	 *
+	 * @remarks
+	 * Obsidian natively scales node size by the number of displayed edges
+	 * (`weight`). This setting adds the indirect visible descendant count on top
+	 * of that so deeply nested sub-trees push the ancestor's size higher.
+	 */
+	weightNodesBySubtree: boolean;
 };

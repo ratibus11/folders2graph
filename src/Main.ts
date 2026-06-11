@@ -49,6 +49,7 @@ export default class Folders2GraphPlugin extends Plugin {
 		showHeadingNodes: false,
 		headingNodeColor: "#f5a55c",
 		hiddenNodes: {},
+		weightNodesBySubtree: false,
 	};
 
 	/** Serialised save queue — every `saveData` call is chained so concurrent
@@ -148,6 +149,16 @@ export default class Folders2GraphPlugin extends Plugin {
 			name: getI18n().commands.unfoldAllNodes.name,
 			callback: async () => {
 				this.settings.hiddenNodes = {};
+				await this.saveSettings();
+				this.refreshGraphLeaves();
+			},
+		});
+
+		this.addCommand({
+			id: "toggle-weight-nodes-by-subtree",
+			name: getI18n().commands.toggleWeightNodesBySubtree.name,
+			callback: async () => {
+				this.settings.weightNodesBySubtree = !this.settings.weightNodesBySubtree;
 				await this.saveSettings();
 				this.refreshGraphLeaves();
 			},

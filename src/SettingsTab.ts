@@ -94,6 +94,17 @@ export class SettingsTab extends PluginSettingTab {
 					this.__plugin.refreshGraphLeaves();
 				});
 			});
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.weightNodesBySubtree.name)
+			.setDesc(this.__i18n.settings.weightNodesBySubtree.desc)
+			.addToggle((component) => {
+				component.setValue(this.__plugin.settings.weightNodesBySubtree).onChange(async (value) => {
+					this.__plugin.settings.weightNodesBySubtree = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
 	}
 
 }
