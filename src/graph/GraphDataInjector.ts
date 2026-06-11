@@ -324,7 +324,7 @@ export class GraphDataInjector {
 	 * @param heading      Raw heading text as it appears in the Markdown file.
 	 * @returns Heading node ID in the form `sourceNodeId#heading`.
 	 */
-	buildHeadingNodeId(sourceNodeId: string, heading: string): string {
+	private buildHeadingNodeId(sourceNodeId: string, heading: string): string {
 		return `${sourceNodeId}#${heading}`;
 	}
 
@@ -362,7 +362,7 @@ export class GraphDataInjector {
 	 * const result = getNodeParentFolders(nodeId);
 	 * // result = ["/", "/folder", "/folder/subfolder"]
 	 */
-	getNodeParentFolders(nodeId: string): string[] {
+	private getNodeParentFolders(nodeId: string): string[] {
 		const subFolders = ["/"];
 
 		const splittedNodeId = nodeId.split("/");
@@ -389,7 +389,7 @@ export class GraphDataInjector {
 	 * const result = getNodeParentFolder(nodeId);
 	 * // result = "/folder/subfolder"
 	 */
-	getNodeParentFolder(nodeId: string): string {
+	private getNodeParentFolder(nodeId: string): string {
 		const splittedNodeId = nodeId.split("/");
 		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1).filter((e) => e != "");
 

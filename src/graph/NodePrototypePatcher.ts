@@ -388,7 +388,7 @@ export class NodePrototypePatcher {
 	 * const result = getColorNumber(color);
 	 * // result = 0x001100 = 4352
 	 */
-	getColorNumber(hexColor: string): number {
+	private getColorNumber(hexColor: string): number {
 		const r = parseInt(hexColor.substring(1, 3), 16).toString(2).padStart(8, "0");
 		const g = parseInt(hexColor.substring(3, 5), 16).toString(2).padStart(8, "0");
 		const b = parseInt(hexColor.substring(5, 7), 16).toString(2).padStart(8, "0");
@@ -408,7 +408,7 @@ export class NodePrototypePatcher {
 	 * `#` characters are handled consistently — such IDs are a known degraded
 	 * case where the heading text will be truncated at the second `#`.
 	 */
-	extractHeadingFromNodeId(nodeId: string): string {
+	private extractHeadingFromNodeId(nodeId: string): string {
 		const idx = nodeId.indexOf("#");
 		return idx >= 0 ? nodeId.slice(idx + 1) : nodeId;
 	}
