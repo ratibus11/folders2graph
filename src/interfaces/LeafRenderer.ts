@@ -29,6 +29,14 @@ export type LeafRenderer = {
 		 * the DisplayObject scale — `getSize()` returns the wrong value for
 		 * geometry measurements. */
 		getSize?: () => number;
+		/**
+		 * Internal edge count used by Obsidian to derive node size. Equals the
+		 * number of currently displayed edges for this node. Temporarily inflated
+		 * by the `getSize` patch in `NodePrototypePatcher` when
+		 * `weightNodesBySubtree` is enabled, to add the indirect visible
+		 * descendant contribution without double-counting direct children.
+		 */
+		weight?: number;
 		/** Returns the fill colour for this node. Patched by `NodePrototypePatcher`
 		 * to return the configured colour for folder and heading nodes. */
 		getFillColor: () => { a: number; rgb: number };
