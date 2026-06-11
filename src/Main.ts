@@ -63,6 +63,22 @@ export default class Folders2GraphPlugin extends Plugin {
 	 * race. Always append to this promise; never await it directly. */
 	private __savePromise: Promise<void> = Promise.resolve();
 
+	/** True while the Shift key is held down. Tracked via capture-phase keydown/keyup on
+	 * window, with a blur-reset to handle cases where keyup is missed. */
+	private __shiftHeld = false;
+
+	/** Arrow-function handlers stored so the same references can be passed to
+	 * removeEventListener on unload. */
+	private __onKeyDown = (e: KeyboardEvent): void => {
+		if (e.key === "Shift") this.__shiftHeld = true;
+	};
+	private __onKeyUp = (e: KeyboardEvent): void => {
+		if (e.key === "Shift") this.__shiftHeld = false;
+	};
+	private __onBlur = (): void => {
+		this.__shiftHeld = false;
+	};
+
 	/**
 	 * Triggered when the plugin is loaded.
 	 */
@@ -100,6 +116,11 @@ export default class Folders2GraphPlugin extends Plugin {
 		// Intercept folder node clicks to reveal them in the file explorer.
 		this.__wrapOpenLinkText();
 
+		// Track Shift key state globally so we can detect Shift+click in openLinkText.
+		window.addEventListener("keydown", this.__onKeyDown, true);
+		window.addEventListener("keyup", this.__onKeyUp, true);
+		window.addEventListener("blur", this.__onBlur, true);
+
 		// When a leaf changes, refresh all graph leaves.
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", (leaf: Nullable<WorkspaceLeaf>) => {
@@ -122,6 +143,11 @@ export default class Folders2GraphPlugin extends Plugin {
 	 */
 	public override onunload(): void {
 		this.__unwrapOpenLinkText();
+
+		// Remove Shift tracking listeners.
+		window.removeEventListener("keydown", this.__onKeyDown, true);
+		window.removeEventListener("keyup", this.__onKeyUp, true);
+		window.removeEventListener("blur", this.__onBlur, true);
 
 		this.__getLeavesOfTypeGraph().forEach((leaf) => {
 			// A `graph`-typed leaf can exist without a mounted renderer (e.g. the view never
@@ -160,6 +186,17 @@ export default class Folders2GraphPlugin extends Plugin {
 			newLeaf?: PaneType | boolean,
 			openViewState?: OpenViewState,
 		): Promise<void> => {
+			// Shift+left-click on a graph node → toggle its fold state instead of navigating.
+			// Guarded on the most recent leaf being a graph view: clicking a node activates
+			// its leaf before openLinkText fires, while a Shift+click on an editor wikilink
+			// keeps the editor leaf active — so editor links are never swallowed.
+			const activeIsGraph =
+				this.app.workspace.getMostRecentLeaf()?.view?.getViewType?.() === "graph";
+			if (this.__shiftHeld && activeIsGraph && this.__allNodeIds.has(linktext)) {
+				this.__handleFoldToggle(linktext);
+				return Promise.resolve();
+			}
+
 			if (this.__folderNodeIds.has(linktext)) {
 				this.__revealFolderInExplorer(linktext);
 				return Promise.resolve();
@@ -432,6 +469,44 @@ export default class Folders2GraphPlugin extends Plugin {
 			}
 		}
 		return collapsed;
+	}
+
+	/**
+	 * Handles Shift+left-click on a node: fold, or unfold one level.
+	 *
+	 * - No structural children → no-op.
+	 * - All descendants hidden (fully folded) → unfold ONE level: the direct children are
+	 *   removed from `hiddenNodes`; each child keeps its own folded state, so there is no
+	 *   recursion.
+	 * - Otherwise (fully or partially visible) → fold: every structural descendant is added
+	 *   to `hiddenNodes`.
+	 *
+	 * The state is persisted on every change and all graph leaves are refreshed. A single
+	 * descendant traversal is used to derive the folded state and to apply the change.
+	 */
+	private __handleFoldToggle(nodeId: string): void {
+		const children = this.__structuralChildren[nodeId];
+		if (!children || children.length === 0) return;
+
+		const descendants = this.__getAllDescendants(nodeId);
+		if (descendants.length === 0) return;
+
+		const isCollapsed = descendants.every((id) => this.settings.hiddenNodes[id]);
+
+		if (isCollapsed) {
+			// Unfold one level: reveal direct children only.
+			for (const childId of children) {
+				delete this.settings.hiddenNodes[childId];
+			}
+		} else {
+			// Fold: hide every structural descendant.
+			for (const descId of descendants) {
+				this.settings.hiddenNodes[descId] = true;
+			}
+		}
+
+		this.saveSettings();
+		this.refreshGraphLeaves();
 	}
 
 	/**
