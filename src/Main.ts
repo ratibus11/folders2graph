@@ -17,7 +17,31 @@ import { GraphDataInjector } from "graph/GraphDataInjector";
 import { NodePrototypePatcher } from "graph/NodePrototypePatcher";
 import { GraphInteractions } from "graph/GraphInteractions";
 
+/**
+ * Entry point for the Folders 2 Graph Obsidian plugin.
+ *
+ * @remarks
+ * This class owns the plugin lifecycle (`onload` / `onunload`) and orchestrates
+ * the five graph subsystems:
+ *
+ * - {@link StructuralHierarchy} — pure parent/child state for fold queries.
+ * - {@link FoldingManager} — fold/unfold operations and stale-entry purge.
+ * - {@link GraphDataInjector} — custom `setData` override that injects virtual
+ *   nodes and filters hidden ones.
+ * - {@link NodePrototypePatcher} — prototype patch for colours, labels, and the
+ *   PIXI half-disc rendering.
+ * - {@link GraphInteractions} — Shift key tracking, `openLinkText` wrapper, and
+ *   per-leaf DOM context-menu suppressor.
+ *
+ * The public API consumed by `SettingsTab` is intentionally minimal:
+ * `plugin.settings` (read), `plugin.saveSettings()` (persist), and
+ * `plugin.refreshGraphLeaves()` (re-render).
+ */
 export default class Folders2GraphPlugin extends Plugin {
+	/**
+	 * Plugin settings. Initialised with defaults; overwritten by
+	 * `__loadSettings` during `onload`.
+	 */
 	public override settings: Settings = {
 		showFolderNodes: true,
 		hideRootNode: false,
@@ -27,8 +51,9 @@ export default class Folders2GraphPlugin extends Plugin {
 		hiddenNodes: {},
 	};
 
-	/** Serialised save queue — every saveData call is chained so concurrent saves never
-	 * race. Always append to this promise; never await it directly. */
+	/** Serialised save queue — every `saveData` call is chained so concurrent
+	 * saves never race each other. Always append to this promise; never await
+	 * it directly from outside `saveSettings`. */
 	private __savePromise: Promise<void> = Promise.resolve();
 
 	private __hierarchy!: StructuralHierarchy;
@@ -39,6 +64,17 @@ export default class Folders2GraphPlugin extends Plugin {
 
 	/**
 	 * Triggered when the plugin is loaded.
+	 *
+	 * @remarks
+	 * Execution order:
+	 * 1. Load persisted settings from disk.
+	 * 2. Register the settings tab.
+	 * 3. Instantiate all graph subsystems (after settings are loaded so every
+	 *    subsystem receives the populated settings object).
+	 * 4. Register commands.
+	 * 5. Install the `openLinkText` wrapper and Shift key listeners.
+	 * 6. Register workspace event handlers.
+	 * 7. Refresh all currently open graph leaves.
 	 */
 	public override async onload(): Promise<void> {
 		// Load settings tab.
@@ -142,6 +178,13 @@ export default class Folders2GraphPlugin extends Plugin {
 
 	/**
 	 * Triggered when the plugin is unloaded.
+	 *
+	 * @remarks
+	 * Restores every graph leaf to its native state:
+	 * 1. Unwraps `workspace.openLinkText`.
+	 * 2. Removes Shift key and context-menu suppression listeners.
+	 * 3. For each graph leaf with a renderer: restores `originalSetData`,
+	 *    unpatches the node prototype, and reloads the view.
 	 */
 	public override onunload(): void {
 		this.__interactions.unwrapOpenLinkText();
@@ -175,8 +218,20 @@ export default class Folders2GraphPlugin extends Plugin {
 
 	/**
 	 * Refreshes the provided graph leaves.
-	 * @param leaves The leaves to refresh. If not provided, all graph leaves will be refreshed.
-	 * @note If a leaf is not a graph, it will be ignored.
+	 *
+	 * @param leaves The leaves to refresh. When omitted, all open graph leaves
+	 *   are refreshed.
+	 *
+	 * @remarks
+	 * Non-graph leaves are silently skipped. The guard is important because the
+	 * `active-leaf-change` event delivers the newly activated leaf regardless
+	 * of its type: running `view.unload(); view.load()` on a non-graph leaf
+	 * (e.g. the file explorer) would rebind its internal listeners and
+	 * duplicate its context-menu handler.
+	 *
+	 * The context-menu suppressor is installed AFTER `unload/load` because the
+	 * reload may rebuild the view's DOM, which would orphan a listener
+	 * installed before it.
 	 */
 	public refreshGraphLeaves(leaves: GraphLeafWithCustomRenderer[] = this.__getLeavesOfTypeGraph()): void {
 		leaves.forEach((leaf) => {
@@ -196,18 +251,27 @@ export default class Folders2GraphPlugin extends Plugin {
 	}
 
 	/**
-	 * A graph leaf is considered ready when its view type is `graph` AND its renderer has
-	 * been mounted. The renderer can briefly be undefined when the `active-leaf-change`
-	 * event fires before the graph view finishes initializing, so this guard prevents the
-	 * downstream code from crashing on `renderer.*`.
+	 * Returns `true` when `leaf` is a fully-initialised graph leaf with a
+	 * mounted renderer.
+	 *
+	 * @param leaf Nullable leaf to test.
+	 * @returns Type predicate narrowing to `GraphLeafWithCustomRenderer`.
+	 *
+	 * @remarks
+	 * The renderer can briefly be `undefined` when the `active-leaf-change`
+	 * event fires before the graph view finishes initializing, so this guard
+	 * prevents the downstream code from crashing on `renderer.*`.
 	 */
 	private __isReadyGraphLeaf(leaf: Nullable<GraphLeafWithCustomRenderer>): leaf is GraphLeafWithCustomRenderer {
 		return !!leaf && !!leaf.view && leaf.view.getViewType() === "graph" && !!leaf.view.renderer;
 	}
 
 	/**
-	 * Installs the custom `setData` override on the renderer of the given leaf.
-	 * @param leaf The graph leaf to inject data into.
+	 * Installs the custom `setData` override on the renderer of the given leaf
+	 * via `GraphDataInjector`, passing a callback that applies the node
+	 * prototype patch after each `setData` completes.
+	 *
+	 * @param leaf The graph leaf whose renderer should be patched.
 	 */
 	private __injectDataInLeaf(leaf: GraphLeafWithCustomRenderer): void {
 		const renderer = leaf.view.renderer;
@@ -215,23 +279,34 @@ export default class Folders2GraphPlugin extends Plugin {
 	}
 
 	/**
-	 * Get all leaves of type "graph".
-	 * @returns The leaves of type "graph".
+	 * Returns all currently open leaves of type `"graph"`.
+	 *
+	 * @returns Array of graph leaves cast to `GraphLeafWithCustomRenderer`.
 	 */
 	private __getLeavesOfTypeGraph(): GraphLeafWithCustomRenderer[] {
 		return this.app.workspace.getLeavesOfType("graph") as GraphLeafWithCustomRenderer[];
 	}
 
 	/**
-	 * Refresh settings and apply them to `this.settings`.
+	 * Loads persisted settings from disk and merges them over the defaults.
+	 *
+	 * @remarks
+	 * Uses `Object.assign` so settings keys added in a newer plugin version
+	 * keep their default values even when the stored data predates them.
 	 */
 	private async __loadSettings() {
 		this.settings = Object.assign({}, this.settings, await this.loadData());
 	}
 
 	/**
-	 * Call the Obsidian API to save the settings. All calls are serialised through
+	 * Persists `this.settings` to disk. All calls are serialised through
 	 * `__savePromise` so concurrent invocations never race each other.
+	 *
+	 * @returns A `Promise` that resolves when this specific save has completed.
+	 *
+	 * @remarks
+	 * Errors are caught and logged so a failed save does not propagate an
+	 * unhandled rejection to the caller.
 	 */
 	public saveSettings(): Promise<void> {
 		this.__savePromise = this.__savePromise

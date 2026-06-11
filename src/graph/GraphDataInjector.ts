@@ -13,15 +13,21 @@ const HEADING_NODE_TAG = "f2g_heading_node";
  * Injects folder nodes and heading nodes into the graph data before it is
  * passed to Obsidian's native renderer.
  *
+ * @remarks
  * This class is responsible for:
  * - Enumerating parent folder paths from existing node IDs and inserting a
- *   virtual folder node for each.
- * - Wiring structural links between folders, files, and headings.
+ *   virtual folder node for each path.
+ * - Wiring structural links between folders, files, and headings, and
+ *   registering those links in `StructuralHierarchy`.
  * - Injecting heading nodes derived from each Markdown file's metadata cache.
  * - Filtering out hidden nodes (from `settings.hiddenNodes`) before the data
  *   reaches the renderer.
  * - Triggering the structural hierarchy rebuild and the purge of stale entries
- *   on every setData call.
+ *   on every `setData` call.
+ *
+ * The custom `setData` override is installed once per renderer instance via
+ * `install`. The original function is preserved as
+ * `renderer.originalSetData` so it can be restored on plugin unload.
  */
 export class GraphDataInjector {
 	private app: App;
@@ -36,9 +42,16 @@ export class GraphDataInjector {
 	private folderNodeIds: Set<string> = new Set();
 
 	/** Full set of node IDs present in the last complete graph data, used for
-	 * validating Shift+click targets in the openLinkText wrapper. */
+	 * validating Shift+click targets in the `openLinkText` wrapper. */
 	private allNodeIds: Set<string> = new Set();
 
+	/**
+	 * @param app            Obsidian application instance.
+	 * @param settings       Plugin settings; read for feature flags and `hiddenNodes`.
+	 * @param hierarchy      Structural hierarchy; reset and rebuilt on every setData.
+	 * @param foldingManager Used to purge stale `hiddenNodes` entries.
+	 * @param save           Callback to persist settings when a purge modifies them.
+	 */
 	constructor(
 		app: App,
 		settings: Settings,
@@ -53,12 +66,26 @@ export class GraphDataInjector {
 		this.save = save;
 	}
 
-	/** Returns the set of injected folder node IDs for the last graph data pass. */
+	/**
+	 * Returns the set of injected folder node IDs for the last graph data pass.
+	 *
+	 * @remarks
+	 * Used by `GraphInteractions.wrapOpenLinkText` to identify folder-node
+	 * clicks without relying on the brittle `startsWith("/")` heuristic, which
+	 * could collide with unusual user wikilinks.
+	 */
 	getFolderNodeIds(): Set<string> {
 		return this.folderNodeIds;
 	}
 
-	/** Returns the full set of all node IDs from the last graph data pass. */
+	/**
+	 * Returns the full set of all node IDs from the last graph data pass
+	 * (post-injection, pre-filter).
+	 *
+	 * @remarks
+	 * Used by `GraphInteractions.wrapOpenLinkText` to validate that a
+	 * Shift+clicked node is a known graph node before toggling its fold state.
+	 */
 	getAllNodeIds(): Set<string> {
 		return this.allNodeIds;
 	}
@@ -68,19 +95,22 @@ export class GraphDataInjector {
 	 * `setData` is saved as `renderer.originalSetData` so it can be restored
 	 * on plugin unload.
 	 *
-	 * The override:
-	 * 1. Injects folder nodes (when `settings.showFolderNodes` is true).
-	 * 2. Injects heading nodes (when `settings.showHeadingNodes` is true).
-	 * 3. Purges stale `hiddenNodes` entries against the vault.
-	 * 4. Computes the collapsed set for O(1) frame-time lookups.
-	 * 5. Filters hidden nodes from the data.
-	 * 6. Calls the original `setData`.
-	 * 7. Triggers the prototype patch callback so rendering overrides are
-	 *    applied after the node list is populated.
-	 *
-	 * @param renderer The graph leaf renderer to patch.
+	 * @param renderer       The graph leaf renderer to patch.
 	 * @param onAfterSetData Callback invoked after the original `setData` runs;
-	 *   used by the plugin to apply the node prototype patch.
+	 *   used by the plugin to apply the node prototype patch once the node list
+	 *   is populated.
+	 *
+	 * @remarks
+	 * The override executes in this order on every setData call:
+	 * 1. Clear `folderNodeIds` and reset the structural hierarchy.
+	 * 2. Inject folder nodes (when `settings.showFolderNodes` is `true`).
+	 * 3. Inject heading nodes (when `settings.showHeadingNodes` is `true`).
+	 * 4. Snapshot `allNodeIds` for Shift+click validation.
+	 * 5. Purge stale `hiddenNodes` entries against the vault; save if changed.
+	 * 6. Compute the collapsed set for O(1) frame-time lookups.
+	 * 7. Filter hidden nodes and their links from the data.
+	 * 8. Call the original `setData`.
+	 * 9. Invoke `onAfterSetData` so the prototype patch is (re-)applied.
 	 */
 	install(renderer: LeafRenderer, onAfterSetData: (renderer: LeafRenderer) => void): void {
 		if (renderer.originalSetData == undefined) {
@@ -184,15 +214,21 @@ export class GraphDataInjector {
 	/**
 	 * For a given source node, reads its Markdown headings and inserts a
 	 * heading node per heading, linking each link / embed found in the file
-	 * to the heading it lives under (the closest heading above it). Heading
-	 * node IDs follow Obsidian's wikilink format `path#heading` so a default
-	 * click on the node opens the source note at that section.
+	 * to the heading it lives under (the closest heading above it).
+	 *
+	 * @param data   Mutable graph data object being built during this setData pass.
+	 * @param nodeId Graph node ID of the source Markdown file.
+	 *
+	 * @remarks
+	 * Heading node IDs follow Obsidian's wikilink format `path#heading` so a
+	 * default click on the node opens the source note at that section.
 	 *
 	 * Structural relationships registered here:
 	 * - file → root heading (heading with no ancestor in this file)
 	 * - heading → direct sub-heading
+	 *
 	 * Non-structural links (refs/embeds from a heading to another file) are
-	 * NOT registered.
+	 * added as graph links but NOT registered in `StructuralHierarchy`.
 	 */
 	private injectHeadingNodesForFile(data: RendererData, nodeId: string): void {
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
@@ -255,8 +291,17 @@ export class GraphDataInjector {
 
 	/**
 	 * Returns the heading whose start line is the closest above (or equal to)
-	 * `line`. Headings are assumed to be sorted by position (Obsidian
-	 * guarantees document order).
+	 * `line`.
+	 *
+	 * @param headings Document-ordered array of heading caches from Obsidian.
+	 * @param line     Zero-based line number of the reference position.
+	 * @returns The nearest owning `HeadingCache`, or `null` when the reference
+	 *   appears before the first heading in the file.
+	 *
+	 * @remarks
+	 * Headings are assumed to be sorted by position (Obsidian guarantees
+	 * document order). Iteration stops as soon as a heading whose start line
+	 * exceeds `line` is encountered.
 	 */
 	private findOwningHeading(headings: HeadingCache[], line: number): Nullable<HeadingCache> {
 		let owning: Nullable<HeadingCache> = null;
@@ -274,16 +319,27 @@ export class GraphDataInjector {
 	 * Builds the heading node ID, matching Obsidian's wikilink syntax
 	 * (`path#heading`) so default click handling opens the note at the
 	 * corresponding section.
+	 *
+	 * @param sourceNodeId Graph node ID of the source file (e.g. `folder/note`).
+	 * @param heading      Raw heading text as it appears in the Markdown file.
+	 * @returns Heading node ID in the form `sourceNodeId#heading`.
 	 */
 	buildHeadingNodeId(sourceNodeId: string, heading: string): string {
 		return `${sourceNodeId}#${heading}`;
 	}
 
 	/**
-	 * Resolves a destination TFile to its corresponding graph node ID. The
-	 * graph stores nodes either by their full path or by their basename for
-	 * ghost links, so both candidates are tried and the path is used as
-	 * fallback.
+	 * Resolves a destination `TFile` to its corresponding graph node ID.
+	 *
+	 * @param data Graph data object containing the current node map.
+	 * @param dest The destination file to look up.
+	 * @returns The matching graph node ID, or `dest.path` as a fallback when
+	 *   no exact match is found in the node map.
+	 *
+	 * @remarks
+	 * The graph stores nodes either by their full path (e.g. `folder/note.md`)
+	 * or by their basename for ghost links (e.g. `note`), so both candidates
+	 * are tried before falling back to the path.
 	 */
 	private resolveGraphNodeId(data: RendererData, dest: TFile): Nullable<string> {
 		if (data.nodes[dest.path]) return dest.path;
@@ -296,6 +352,10 @@ export class GraphDataInjector {
 	/**
 	 * Returns each ancestor folder path of `nodeId` as a `/`-prefixed string,
 	 * including the vault root `/`.
+	 *
+	 * @param nodeId Graph node ID of the file or folder.
+	 * @returns Array of `/`-prefixed folder paths from root to the immediate
+	 *   parent, in ascending depth order.
 	 *
 	 * @example
 	 * const nodeId = "folder/subfolder/file.md";
@@ -320,6 +380,9 @@ export class GraphDataInjector {
 	/**
 	 * Returns the direct parent folder path of `nodeId` as a `/`-prefixed
 	 * string. The vault root `/` is its own parent.
+	 *
+	 * @param nodeId Graph node ID of the file or folder.
+	 * @returns The `/`-prefixed parent folder path.
 	 *
 	 * @example
 	 * const nodeId = "folder/subfolder/file.md";

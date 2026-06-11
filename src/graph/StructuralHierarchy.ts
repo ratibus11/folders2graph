@@ -6,6 +6,16 @@ import { Settings } from "interfaces/Settings";
  * This class is pure state — it has no Obsidian dependency. It tracks which
  * nodes are structural parents/children (folders contain files; files contain
  * headings) and provides collapsed-state queries used by the renderer.
+ *
+ * @remarks
+ * "Structural" relationships are hierarchy links injected by this plugin:
+ * - folder → direct child folder
+ * - folder → file it contains
+ * - file → root heading
+ * - heading → direct sub-heading
+ *
+ * Regular note-to-note wikilinks are NOT structural and are never registered
+ * here.
  */
 export class StructuralHierarchy {
 	/** For every node ID, the list of IDs that are its direct structural children
@@ -22,11 +32,22 @@ export class StructuralHierarchy {
 	/** Reference to plugin settings, used to read `hiddenNodes`. */
 	private settings: Settings;
 
+	/**
+	 * @param settings Plugin settings object. The instance is shared with the
+	 *   plugin so mutations to `settings.hiddenNodes` are visible here without
+	 *   re-injection.
+	 */
 	constructor(settings: Settings) {
 		this.settings = settings;
 	}
 
-	/** Clears both maps in preparation for a fresh setData pass. */
+	/**
+	 * Clears both maps in preparation for a fresh setData pass.
+	 *
+	 * @remarks
+	 * Must be called at the start of every `GraphDataInjector.install` callback
+	 * so stale relationships from the previous graph state are not carried over.
+	 */
 	reset(): void {
 		this.children = {};
 		this.parent = {};
@@ -35,9 +56,14 @@ export class StructuralHierarchy {
 	/**
 	 * Registers `childId` as a structural child of `parentId` in both maps.
 	 *
-	 * Self-relationships are ignored: the root folder `/` is its own computed
-	 * parent (`getNodeParentFolder("/")` returns `/`), and registering it as its
-	 * own child would make folding the root hide the root node itself.
+	 * @param parentId ID of the structural parent node.
+	 * @param childId  ID of the structural child node.
+	 *
+	 * @remarks
+	 * Self-relationships are silently ignored: the root folder `/` is its own
+	 * computed parent (`getNodeParentFolder("/")` returns `/`), and registering
+	 * it as its own child would cause folding the root to hide the root node
+	 * itself.
 	 */
 	addChild(parentId: string, childId: string): void {
 		if (parentId === childId) return;
@@ -50,8 +76,16 @@ export class StructuralHierarchy {
 
 	/**
 	 * Returns all structural descendants of `nodeId` via an iterative
-	 * depth-first traversal of the children map. A `visited` Set guards
-	 * against accidental cycles.
+	 * depth-first traversal of the children map.
+	 *
+	 * @param nodeId The node whose subtree is to be collected.
+	 * @returns Flat array of all descendant node IDs in DFS order; empty when
+	 *   `nodeId` has no registered children.
+	 *
+	 * @remarks
+	 * A `visited` Set guards against accidental cycles in the children map,
+	 * which should never occur in normal use but could arise from corrupted
+	 * state.
 	 */
 	getAllDescendants(nodeId: string): string[] {
 		const descendants: string[] = [];
@@ -75,16 +109,21 @@ export class StructuralHierarchy {
 	}
 
 	/**
-	 * Returns the direct structural children of `nodeId`, or an empty array if
-	 * none are registered.
+	 * Returns the direct structural children of `nodeId`.
+	 *
+	 * @param nodeId The node to query.
+	 * @returns The children array, or an empty array if none are registered.
 	 */
 	getChildren(nodeId: string): string[] {
 		return this.children[nodeId] ?? [];
 	}
 
 	/**
-	 * Returns the structural parent ID of `nodeId`, or `undefined` if `nodeId`
-	 * is a root-level node with no registered parent.
+	 * Returns the structural parent ID of `nodeId`.
+	 *
+	 * @param nodeId The node to query.
+	 * @returns The parent node ID, or `undefined` if `nodeId` is a root-level
+	 *   node with no registered parent.
 	 */
 	getParent(nodeId: string): string | undefined {
 		return this.parent[nodeId];
@@ -92,8 +131,14 @@ export class StructuralHierarchy {
 
 	/**
 	 * Returns true if `nodeId` is fully collapsed: it has at least one
-	 * structural child and every descendant is present in `settings.hiddenNodes`.
-	 * For frame-time use, prefer `isCollapsed(nodeId)` after `computeCollapsedSet`.
+	 * structural child and every descendant is present in
+	 * `settings.hiddenNodes`.
+	 *
+	 * @param nodeId The node to test.
+	 *
+	 * @remarks
+	 * For frame-time use, prefer `isCollapsed(nodeId)` after
+	 * `computeCollapsedSet` has been called for the current graph data.
 	 */
 	private isNodeCollapsed(nodeId: string): boolean {
 		const kids = this.children[nodeId];
@@ -105,8 +150,12 @@ export class StructuralHierarchy {
 
 	/**
 	 * Builds the full set of collapsed node IDs from the current children map
-	 * and `settings.hiddenNodes`. Call this once per setData so frame-time
-	 * rendering can do O(1) `isCollapsed(id)` lookups.
+	 * and `settings.hiddenNodes`, replacing `collapsedNodeIds`.
+	 *
+	 * @remarks
+	 * Called once per `setData` pass by `GraphDataInjector` so that
+	 * `NodePrototypePatcher`'s render override can do O(1)
+	 * `isCollapsed(id)` lookups instead of recomputing per node per frame.
 	 */
 	computeCollapsedSet(): void {
 		const collapsed = new Set<string>();
@@ -120,8 +169,14 @@ export class StructuralHierarchy {
 
 	/**
 	 * Returns true if `nodeId` is in the pre-computed collapsed set.
+	 *
+	 * @param nodeId The node to test.
+	 * @returns `true` when every structural descendant of `nodeId` is hidden.
+	 *
+	 * @remarks
 	 * Only accurate after `computeCollapsedSet` has been called for the
-	 * current graph data.
+	 * current graph data. Used in the PIXI render override to decide whether
+	 * to draw the half-disc.
 	 */
 	isCollapsed(nodeId: string): boolean {
 		return this.collapsedNodeIds.has(nodeId);
@@ -130,6 +185,13 @@ export class StructuralHierarchy {
 	/**
 	 * Returns true if at least one structural descendant of `nodeId` is
 	 * currently hidden in `settings.hiddenNodes`.
+	 *
+	 * @param nodeId The node to test.
+	 *
+	 * @remarks
+	 * Used by both the PIXI right-click wrapper (to decide whether to swallow
+	 * the gesture) and `FoldingManager.handleRecursiveUnfold` (to decide
+	 * whether there is anything to reveal).
 	 */
 	hasHiddenDescendant(nodeId: string): boolean {
 		return this.getAllDescendants(nodeId).some((id) => this.settings.hiddenNodes[id]);

@@ -3,11 +3,25 @@ import Folders2GraphPlugin from "Main";
 import { App, PluginSettingTab, Setting } from "obsidian";
 import { I18n } from "types/I18n";
 
+/**
+ * Obsidian settings tab for the Folders 2 Graph plugin.
+ *
+ * @remarks
+ * Renders toggle and colour-picker controls for each plugin setting. Each
+ * control mutates `plugin.settings` directly, then calls
+ * `plugin.saveSettings()` and `plugin.refreshGraphLeaves()` so the graph view
+ * reflects the change immediately.
+ */
 export class SettingsTab extends PluginSettingTab {
 	private __i18n: I18n = getI18n();
 
 	private __plugin: Folders2GraphPlugin;
 
+	/**
+	 * @param app    Obsidian application instance, forwarded to the base class.
+	 * @param plugin Plugin instance whose `settings`, `saveSettings`, and
+	 *   `refreshGraphLeaves` are used by the controls.
+	 */
 	constructor(app: App, plugin: Folders2GraphPlugin) {
 		super(app, plugin);
 		this.__plugin = plugin;
@@ -15,6 +29,11 @@ export class SettingsTab extends PluginSettingTab {
 
 	/**
 	 * Render the settings tab in the UI.
+	 *
+	 * @remarks
+	 * Called by Obsidian whenever the settings panel is opened or the tab is
+	 * selected. Clears the container element and rebuilds all controls from
+	 * scratch.
 	 */
 	public override display(): void {
 		let { containerEl } = this;

@@ -9,6 +9,11 @@ import { StructuralHierarchy } from "graph/StructuralHierarchy";
  * `FoldingManager` reads and mutates `settings.hiddenNodes`, then delegates
  * persistence to the `save` callback and graph refresh to the `refresh`
  * callback — keeping it decoupled from the plugin lifecycle.
+ *
+ * @remarks
+ * All fold operations persist the result via `save` and immediately trigger
+ * `refresh` so the graph view reflects the new state without requiring the
+ * user to do anything.
  */
 export class FoldingManager {
 	private app: App;
@@ -17,6 +22,15 @@ export class FoldingManager {
 	private save: () => Promise<void>;
 	private refresh: () => void;
 
+	/**
+	 * @param app       Obsidian application instance, used for vault lookups in `purge`.
+	 * @param settings  Plugin settings whose `hiddenNodes` map is mutated directly.
+	 * @param hierarchy Structural hierarchy used to traverse parent/child relationships.
+	 * @param save      Callback that persists `settings` to disk; called after every
+	 *   state change.
+	 * @param refresh   Callback that re-renders all graph leaves; called after every
+	 *   state change.
+	 */
 	constructor(
 		app: App,
 		settings: Settings,
@@ -34,14 +48,17 @@ export class FoldingManager {
 	/**
 	 * Handles Shift+left-click on a node: fold, or unfold one level.
 	 *
-	 * - No structural children → no-op.
-	 * - All descendants hidden (fully folded) → unfold ONE level: the direct
-	 *   children are removed from `hiddenNodes`; each child keeps its own
-	 *   folded state, so there is no recursion.
-	 * - Otherwise (fully or partially visible) → fold: every structural
+	 * @param nodeId The node that was Shift+clicked.
+	 *
+	 * @remarks
+	 * Behaviour by current state:
+	 * - **No structural children** → no-op.
+	 * - **All descendants hidden** (fully folded) → unfold ONE level: the
+	 *   direct children are removed from `hiddenNodes`; each child keeps its
+	 *   own folded state, so there is no recursion.
+	 * - **Otherwise** (fully or partially visible) → fold: every structural
 	 *   descendant is added to `hiddenNodes`.
 	 *
-	 * The state is persisted on every change and all graph leaves are refreshed.
 	 * A single descendant traversal is used to derive the folded state and to
 	 * apply the change.
 	 */
@@ -72,9 +89,11 @@ export class FoldingManager {
 
 	/**
 	 * Handles Shift+right-click on a node: recursively unfolds the whole
-	 * subtree, unconditionally — every hidden structural descendant is
-	 * revealed, whatever the current state (fully folded, partially folded or
-	 * mixed). No-op when nothing is hidden.
+	 * subtree unconditionally — every hidden structural descendant is
+	 * revealed, regardless of the current state (fully folded, partially
+	 * folded, or mixed). No-op when nothing is hidden under `nodeId`.
+	 *
+	 * @param nodeId The node that was Shift+right-clicked.
 	 */
 	handleRecursiveUnfold(nodeId: string): void {
 		const toUnhide = this.hierarchy
@@ -92,15 +111,21 @@ export class FoldingManager {
 
 	/**
 	 * Purges stale entries from `settings.hiddenNodes` by checking each stored
-	 * node ID against the vault. Purging is conservative: when an ID format is
-	 * unrecognised the entry is kept rather than risking destruction of user
-	 * state.
+	 * node ID against the vault.
 	 *
-	 * Purging is intentionally based on vault existence, NOT on what is
-	 * currently rendered — purging against the rendered graph would incorrectly
-	 * remove all heading entries when `showHeadingNodes` is off.
+	 * @returns `true` if at least one entry was removed and settings must be
+	 *   saved; `false` when the map was already clean.
 	 *
-	 * @returns `true` if at least one entry was removed and settings must be saved.
+	 * @remarks
+	 * Purging is intentionally conservative: when an ID format is unrecognised
+	 * the entry is kept rather than risking destruction of user state. A
+	 * superfluous entry in `hiddenNodes` is invisible to the user; a premature
+	 * purge destroys their carefully arranged collapsed state.
+	 *
+	 * Purging is based on vault existence, NOT on what is currently rendered —
+	 * purging against the rendered graph would incorrectly remove all heading
+	 * entries when `showHeadingNodes` is off, or all folder entries when
+	 * `showFolderNodes` is off.
 	 */
 	purge(): boolean {
 		let purged = false;
@@ -118,22 +143,24 @@ export class FoldingManager {
 	 * corresponds to a real vault item, independent of the current
 	 * `showFolderNodes`/`showHeadingNodes` toggles.
 	 *
-	 * Rules by ID format:
-	 * - Folder IDs start with `/` (or equal `/`): `/` is always valid (vault
-	 *   root); others are valid when
-	 *   `app.vault.getAbstractFileByPath(id.slice(1))` returns a TFolder.
-	 * - Heading IDs contain `#`: the portion before the first `#` must resolve
-	 *   to a file via `metadataCache.getFirstLinkpathDest`, AND the portion
-	 *   after the first `#` must appear as a heading text in that file's cache.
-	 * - Everything else (plain file IDs): valid when either
-	 *   `metadataCache.getFirstLinkpathDest(id, "")` or
-	 *   `vault.getAbstractFileByPath(id)` returns a non-null result. The graph
-	 *   may store IDs as full paths or as basenames without extension, so both
-	 *   lookups are tried.
+	 * @param id A node ID from `settings.hiddenNodes`.
+	 * @returns `true` when the ID maps to an existing vault item, or when the
+	 *   format is unrecognised (conservative keep).
 	 *
-	 * When in doubt the method returns `true` (conservative: keep the entry).
-	 * A superfluous entry in hiddenNodes is invisible to the user; a premature
-	 * purge destroys their carefully arranged collapsed state.
+	 * @remarks
+	 * Rules by ID format:
+	 * - **Folder IDs** (start with `/`, or equal `/`): `/` is always valid
+	 *   (vault root); others are valid when
+	 *   `app.vault.getAbstractFileByPath(id.slice(1))` returns a `TFolder`.
+	 * - **Heading IDs** (contain `#`): the portion before the first `#` must
+	 *   resolve to a file via `metadataCache.getFirstLinkpathDest`, AND the
+	 *   portion after the first `#` must appear as a heading text in that
+	 *   file's cache.
+	 * - **Plain file IDs**: valid when either
+	 *   `metadataCache.getFirstLinkpathDest(id, "")` or
+	 *   `vault.getAbstractFileByPath(id)` returns a non-null result. Both are
+	 *   tried because the graph stores IDs either as full paths or as basenames
+	 *   without extension.
 	 */
 	isNodeIdValidInVault(id: string): boolean {
 		// Folder node: starts with `/`.

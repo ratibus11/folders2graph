@@ -9,17 +9,23 @@ const HEADING_NODE_TAG = "f2g_heading_node";
  * Patches and restores the Node class prototype shared by all graph node
  * instances across all leaves.
  *
- * Because the prototype is shared, the patch must NOT capture any per-leaf
- * state (renderer reference, leaf ID, …). All data is accessed through the
- * injected `settings` and `hierarchy` references, and through per-instance
- * properties (`this.id`, `this.renderer`, …) read at call time.
+ * @remarks
+ * Because the prototype is shared across ALL graph leaves, the patch must NOT
+ * capture any per-leaf or per-renderer state. All data is accessed through:
+ * - The injected `settings` and `hierarchy` references (shared singletons).
+ * - Per-instance properties (`this.id`, `this.renderer`, `this.circle`, …)
+ *   read at call time inside the patched methods.
  *
  * The patch covers:
  * - `getFillColor` — returns the configured colour for folder / heading nodes.
  * - `getDisplayText` — strips the file-path prefix from heading node labels.
- * - Render method (`render` | `draw` | `updateGraphics`) — wraps PIXI circle
- *   listeners once per instance to intercept Shift+right-click, and redraws
- *   collapsed nodes as a half-disc each frame.
+ * - Render method (`render` | `draw` | `updateGraphics`, whichever is present
+ *   in the current Obsidian build) — wraps PIXI circle listeners once per
+ *   node instance to intercept Shift+right-click, and redraws collapsed nodes
+ *   as a half-disc on every frame.
+ *
+ * `patch` is idempotent: a second call on an already-patched prototype is a
+ * no-op, guarded by the `__f2gPatched` flag.
  */
 export class NodePrototypePatcher {
 	private settings: Settings;
@@ -28,6 +34,19 @@ export class NodePrototypePatcher {
 	private setSuppressNextContextMenu: (value: boolean) => void;
 	private getSuppressNextContextMenu: () => boolean;
 
+	/**
+	 * @param settings                    Plugin settings; read for node colours.
+	 * @param hierarchy                   Structural hierarchy; queried for
+	 *   `isCollapsed`, `getParent`, and `hasHiddenDescendant` at render time.
+	 * @param handleRecursiveUnfold       Callback that triggers a full subtree
+	 *   unfold when Shift+right-click is detected on a node with hidden
+	 *   descendants.
+	 * @param getSuppressNextContextMenu  Returns the current value of the
+	 *   suppress-context-menu flag, set by the PIXI rightdown wrapper and
+	 *   consumed by the DOM `contextmenu` listener.
+	 * @param setSuppressNextContextMenu  Sets the suppress-context-menu flag.
+	 *   Called by the PIXI rightdown wrapper when swallowing a gesture.
+	 */
 	constructor(
 		settings: Settings,
 		hierarchy: StructuralHierarchy,
@@ -44,14 +63,21 @@ export class NodePrototypePatcher {
 
 	/**
 	 * Patches the Node class prototype so every node instance — current and
-	 * future — returns the configured color for folder nodes, the configured
-	 * color for heading nodes, (best effort) renders collapsed nodes as a
-	 * semi-circle, and intercepts Shift+right-click to trigger recursive
-	 * unfold.
+	 * future — returns the configured colour for folder / heading nodes,
+	 * renders collapsed nodes as a semi-circle, and intercepts
+	 * Shift+right-click to trigger recursive unfold.
 	 *
-	 * Patching the prototype (rather than each instance) ensures the override
-	 * survives node recreations triggered by Obsidian without going through
-	 * our custom `setData`.
+	 * @param renderer Any mounted graph renderer; used only to access the first
+	 *   node instance and obtain its prototype. The renderer reference is NOT
+	 *   captured by the patch.
+	 *
+	 * @remarks
+	 * Patching the prototype (rather than each instance) ensures the overrides
+	 * survive node recreations triggered by Obsidian without going through our
+	 * custom `setData`.
+	 *
+	 * A no-op when `renderer.nodes` is empty or the prototype already carries
+	 * the `__f2gPatched` flag.
 	 */
 	patch(renderer: LeafRenderer): void {
 		if (renderer.nodes.length === 0) return;
@@ -91,9 +117,9 @@ export class NodePrototypePatcher {
 		// Patch the node render method (its name varies across Obsidian builds)
 		// so that, once per node instance, the PIXI listeners of the node circle
 		// are wrapped to intercept Shift+right-click. Obsidian registers its own
-		// circle listeners BEFORE ours, so simply adding another listener could
-		// not prevent the native behaviour — the existing listeners are detached
-		// and re-invoked conditionally instead.
+		// circle listeners (which open the native context menu) BEFORE ours, so
+		// simply adding another listener could not prevent the native behaviour —
+		// the existing listeners are detached and re-invoked conditionally instead.
 		const renderMethodName = (["render", "draw", "updateGraphics"] as const).find(
 			(name) => typeof proto[name] === "function",
 		) as string | undefined;
@@ -203,8 +229,11 @@ export class NodePrototypePatcher {
 					try {
 						// Measure the native base radius AND centre from the local geometry on
 						// first encounter (before we clear it). Both are cached per-instance.
+						//
 						// Obsidian draws the circle at a large local radius (~100) and uses the
-						// DisplayObject scale for sizing, so getSize() is wrong here.
+						// DisplayObject scale for sizing, so `getSize()` returns the wrong
+						// value here — we must read local geometry instead.
+						//
 						// The centre must be captured because PIXI geometry is not necessarily
 						// centred on (0, 0) — drawing at (0, 0) would appear shifted by one
 						// radius. Fallbacks: radius=100, centre=(0, 0).
@@ -275,8 +304,8 @@ export class NodePrototypePatcher {
 					}
 				} else if (this.__f2gHalfDrawn) {
 					// ── TRANSITION: just unfolded ── restore the full circle once. Obsidian
-					// does not redraw the circle geometry on its own, so a custom drawing
-					// persists until we replace it ourselves.
+					// does not redraw the circle geometry on its own when a node changes
+					// state, so a custom drawing persists until we replace it explicitly.
 					try {
 						const baseRadius: number = this.__f2gBaseRadius ?? 100;
 						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
@@ -307,7 +336,14 @@ export class NodePrototypePatcher {
 
 	/**
 	 * Restores the original `getFillColor`, `getDisplayText`, and render method
-	 * on the Node prototype. Called on plugin unload.
+	 * on the Node prototype.
+	 *
+	 * @param renderer Any mounted graph renderer; used only to access the node
+	 *   prototype. The renderer reference is NOT stored.
+	 *
+	 * @remarks
+	 * Called on plugin unload. A no-op when the prototype does not carry the
+	 * `__f2gPatched` flag (e.g. when the renderer had no nodes at patch time).
 	 */
 	unpatch(renderer: LeafRenderer): void {
 		if (renderer.nodes.length === 0) return;
@@ -337,14 +373,20 @@ export class NodePrototypePatcher {
 
 	/**
 	 * Converts a CSS hex colour string to the 24-bit integer format used by
-	 * Obsidian's graph renderer (and PIXI). The colour is stored as hex and the
-	 * renderer expects the concatenation of the 8-bit binary values of each
-	 * RGB channel.
+	 * Obsidian's graph renderer (and PIXI tint).
+	 *
+	 * @param hexColor A 7-character CSS hex colour string (e.g. `"#5c8af5"`).
+	 * @returns The colour as a 24-bit integer whose bits are the concatenation
+	 *   of the 8-bit binary values of the R, G, and B channels.
+	 *
+	 * @remarks
+	 * Obsidian's renderer stores per-node colours as plain JavaScript numbers
+	 * in the same format used by PIXI `tint` values.
 	 *
 	 * @example
-	 * const color = "#001100"; // (00000000 00010001 00000000)
+	 * const color = "#001100"; // R=0x00, G=0x11, B=0x00
 	 * const result = getColorNumber(color);
-	 * // result = 4352
+	 * // result = 0x001100 = 4352
 	 */
 	getColorNumber(hexColor: string): number {
 		const r = parseInt(hexColor.substring(1, 3), 16).toString(2).padStart(8, "0");
@@ -355,10 +397,16 @@ export class NodePrototypePatcher {
 	}
 
 	/**
-	 * Extracts the heading portion of a heading node ID (`path#heading` →
-	 * `heading`). Uses `indexOf` (first `#`) so that headings whose text
-	 * itself contains `#` are handled consistently — such IDs are a known
-	 * degraded case. Falls back to the full ID when no `#` is present.
+	 * Extracts the heading portion of a heading node ID.
+	 *
+	 * @param nodeId A heading node ID in the form `path#heading`.
+	 * @returns The heading text after the first `#`, or the full `nodeId` when
+	 *   no `#` is present.
+	 *
+	 * @remarks
+	 * Uses `indexOf` (first `#`) so that headings whose text itself contains
+	 * `#` characters are handled consistently — such IDs are a known degraded
+	 * case where the heading text will be truncated at the second `#`.
 	 */
 	extractHeadingFromNodeId(nodeId: string): string {
 		const idx = nodeId.indexOf("#");

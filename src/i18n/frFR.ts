@@ -1,5 +1,11 @@
 import { I18n } from "types/I18n";
 
+/**
+ * French (France) locale strings.
+ *
+ * @remarks
+ * Selected when `localStorage.getItem("language")` returns `"fr"`.
+ */
 export const frFR: I18n = {
 	settings: {
 		showFolderNodes: {
