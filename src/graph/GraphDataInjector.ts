@@ -565,9 +565,15 @@ export class GraphDataInjector {
 			if (!targetNodeId || !data.nodes[targetNodeId]) continue;
 
 			// Check whether the target file already has this heading in its cache.
+			// Comparison is case-insensitive: Obsidian resolves [[note#introduction]]
+			// to the heading "## Introduction", so a case-only difference must not
+			// produce a duplicate ghost node.
 			const targetCache = this.app.metadataCache.getFileCache(targetFile);
 			const existingHeadings = targetCache?.headings ?? [];
-			const headingExists = existingHeadings.some((h) => h.heading === fragment);
+			const fragmentLower = fragment.toLowerCase();
+			const headingExists = existingHeadings.some(
+				(h) => h.heading.toLowerCase() === fragmentLower,
+			);
 			if (headingExists) continue;
 
 			// Build the ghost heading node ID.
@@ -792,7 +798,7 @@ export class GraphDataInjector {
 		const splittedNodeId = nodeId.split("/");
 		// Filter empty segments that arise from a leading "/" (unresolved wikilinks
 		// such as "/a/b/c.md" produce ["", "a", "b", "c.md"] after split).
-		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1).filter((e) => e != "");
+		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1).filter((e) => e !== "");
 
 		let currentFolder = "";
 		subFoldersSteps.forEach((subfolder) => {
@@ -817,7 +823,7 @@ export class GraphDataInjector {
 	 */
 	private getNodeParentFolder(nodeId: string): string {
 		const splittedNodeId = nodeId.split("/");
-		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1).filter((e) => e != "");
+		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1).filter((e) => e !== "");
 
 		return `/${subFoldersSteps.join("/")}`;
 	}

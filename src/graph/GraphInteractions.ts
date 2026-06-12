@@ -295,6 +295,13 @@ export class GraphInteractions {
 	 *
 	 * If the folder already exists (concurrent creation) the error is swallowed
 	 * silently — the refresh still runs so the graph state is consistent.
+	 *
+	 * **Implementation note:** in practice `vault.createFolder` creates all missing
+	 * intermediate directories automatically (e.g. calling it with `"a/b/c"` creates
+	 * `a`, `a/b`, and `a/b/c` in one shot). This behaviour has been observed
+	 * consistently but is not guaranteed by the public Obsidian API. If it ever
+	 * changes, the error will be swallowed here and the click will have no visible
+	 * effect on the vault.
 	 */
 	private async createGhostFolder(folderNodeId: string): Promise<void> {
 		const vaultPath = folderNodeId.slice(1);
@@ -328,8 +335,17 @@ export class GraphInteractions {
 	 *
 	 * The target file is resolved from the portion of the ID before the first
 	 * `#`. If the file cannot be found the method is a no-op.
+	 *
+	 * **Limitation (inherited):** when the graph stores a node by basename only
+	 * (i.e. `resolveGraphNodeId` matched on `dest.basename`) and multiple files in
+	 * the vault share that basename, `getFirstLinkpathDest` may resolve to the
+	 * wrong file.  This is a pre-existing limitation of the `resolveGraphNodeId`
+	 * ID scheme and is not specific to ghost headings.
 	 */
 	private async createGhostHeading(ghostHeadingId: string): Promise<void> {
+		// Split on the FIRST `#` to derive filePart and headingText.
+		// Sync contract: NodePrototypePatcher.extractHeadingFromNodeId uses the
+		// same first-`#` split.  Both must stay aligned on the `path#heading` format.
 		const hashIdx = ghostHeadingId.indexOf("#");
 		if (hashIdx < 0) return;
 

@@ -304,6 +304,34 @@ export class NodePrototypePatcher {
 					this.type === "unresolved" ||
 					patcher.isGhostNode(this.id);
 
+				// ── Shared geometry measurement ─────────────────────────────────────────
+				// Measure the native base radius and centre from the local PIXI geometry
+				// on the first frame that needs a custom draw (before we clear it).  Both
+				// values are cached per-instance so subsequent frames skip the measurement.
+				//
+				// Obsidian draws the circle at a large local radius (~100) and uses the
+				// DisplayObject scale for sizing, so `getSize()` returns the wrong value
+				// here — we must read local geometry instead.  The centre is captured
+				// because PIXI geometry is not necessarily centred on (0, 0): drawing at
+				// (0, 0) would shift the disc by one radius.  Fallbacks: radius=100,
+				// centre=(0, 0).
+				//
+				// The measurement block runs for collapsed AND ghost branches; it is placed
+				// here (before the if/else) so neither branch duplicates it.
+				if ((isCollapsed || isGhost) && !this.__f2gBaseRadius) {
+					let r = 0;
+					let cx = 0;
+					let cy = 0;
+					if (typeof this.circle.getLocalBounds === "function") {
+						const b = this.circle.getLocalBounds();
+						r = Math.max(b.width, b.height) / 2;
+						cx = b.x + b.width / 2;
+						cy = b.y + b.height / 2;
+					}
+					this.__f2gBaseRadius = r > 0 && isFinite(r) ? r : 100;
+					this.__f2gBaseCenter = { x: cx, y: cy };
+				}
+
 				if (isCollapsed) {
 					// ── FOLDED STATE ──────────────────────────────────────────────────────
 					// Redraw the half-disc every frame so that:
@@ -313,39 +341,18 @@ export class NodePrototypePatcher {
 					// acceptable in practice.
 					//
 					// @remarks
-					// A ghost node can be folded (e.g. user Shift+clicked it). Pliage de
-					// fantôme ne survit pas au redémarrage: the vault-based hiddenNodes purge
-					// will remove its descendants on the next load because they are not real
-					// vault items. This is accepted behaviour.
+					// A ghost node can be folded (e.g. user Shift+clicked it). The fold
+					// state survives across setData calls for as long as the ghost is
+					// displayed in the graph: FoldingManager.purge() exempts entries whose
+					// ID matches a currently-displayed ghost node. When the backing wikilink
+					// is removed (and the ghost disappears), the purge resumes and the fold
+					// state is discarded on the next setData pass.
+					//
+					// Color: draw in white (0xffffff) so that Obsidian's per-frame `tint`
+					// on the DisplayObject applies the correct node colour (hover included),
+					// exactly as the native full circle does.
 					try {
-						// Measure the native base radius AND centre from the local geometry on
-						// first encounter (before we clear it). Both are cached per-instance.
-						//
-						// Obsidian draws the circle at a large local radius (~100) and uses the
-						// DisplayObject scale for sizing, so `getSize()` returns the wrong
-						// value here — we must read local geometry instead.
-						//
-						// The centre must be captured because PIXI geometry is not necessarily
-						// centred on (0, 0) — drawing at (0, 0) would appear shifted by one
-						// radius. Fallbacks: radius=100, centre=(0, 0).
-						//
-						// Color: draw in white (0xffffff) so that Obsidian's per-frame `tint`
-						// on the DisplayObject applies the correct node colour (hover included),
-						// exactly as the native full circle does.
-						if (!this.__f2gBaseRadius) {
-							let r = 0;
-							let cx = 0;
-							let cy = 0;
-							if (typeof this.circle.getLocalBounds === "function") {
-								const b = this.circle.getLocalBounds();
-								r = Math.max(b.width, b.height) / 2;
-								cx = b.x + b.width / 2;
-								cy = b.y + b.height / 2;
-							}
-							this.__f2gBaseRadius = r > 0 && isFinite(r) ? r : 100;
-							this.__f2gBaseCenter = { x: cx, y: cy };
-						}
-						const baseRadius: number = this.__f2gBaseRadius;
+						const baseRadius: number = this.__f2gBaseRadius ?? 100;
 						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
 						const cx: number = baseCenter.x;
 						const cy: number = baseCenter.y;
@@ -384,6 +391,7 @@ export class NodePrototypePatcher {
 						this.circle.endFill();
 
 						this.__f2gHalfDrawn = true;
+						this.__f2gGhostDrawn = false;
 					} catch (err) {
 						// Restore the normal circle if the custom drawing failed mid-way — a
 						// clear() without a successful redraw would leave the node invisible.
@@ -401,20 +409,7 @@ export class NodePrototypePatcher {
 					// White stroke + Obsidian tint ensures hover colour works correctly,
 					// matching the convention used by the half-disc drawing above.
 					try {
-						if (!this.__f2gBaseRadius) {
-							let r = 0;
-							let cx = 0;
-							let cy = 0;
-							if (typeof this.circle.getLocalBounds === "function") {
-								const b = this.circle.getLocalBounds();
-								r = Math.max(b.width, b.height) / 2;
-								cx = b.x + b.width / 2;
-								cy = b.y + b.height / 2;
-							}
-							this.__f2gBaseRadius = r > 0 && isFinite(r) ? r : 100;
-							this.__f2gBaseCenter = { x: cx, y: cy };
-						}
-						const baseRadius: number = this.__f2gBaseRadius;
+						const baseRadius: number = this.__f2gBaseRadius ?? 100;
 						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
 						const cx: number = baseCenter.x;
 						const cy: number = baseCenter.y;
@@ -432,6 +427,7 @@ export class NodePrototypePatcher {
 						this.circle.endFill();
 
 						this.__f2gGhostDrawn = true;
+						this.__f2gHalfDrawn = false;
 					} catch (err) {
 						try {
 							originalRender.apply(this, args);
@@ -464,6 +460,7 @@ export class NodePrototypePatcher {
 						}
 					}
 					this.__f2gHalfDrawn = false;
+					this.__f2gGhostDrawn = false;
 				} else if (this.__f2gGhostDrawn) {
 					// ── TRANSITION: ghost → real ── restore the full circle once. The
 					// ghost flag is cleared so subsequent frames do not re-enter this branch.
@@ -489,6 +486,7 @@ export class NodePrototypePatcher {
 						}
 					}
 					this.__f2gGhostDrawn = false;
+					this.__f2gHalfDrawn = false;
 				}
 			};
 		}
@@ -574,6 +572,12 @@ export class NodePrototypePatcher {
 	 * Uses `indexOf` (first `#`) so that headings whose text itself contains
 	 * `#` characters are handled consistently — such IDs are a known degraded
 	 * case where the heading text will be truncated at the second `#`.
+	 *
+	 * **Sync contract:** this method splits on the **first** `#` character.
+	 * `GraphInteractions.createGhostHeading` uses the same first-`#` split to
+	 * reconstruct `filePart` and `headingText` from a ghost heading ID.  Both
+	 * must remain consistent on the `path#heading` format whenever the ID scheme
+	 * changes.
 	 *
 	 * @example
 	 * const label = extractHeadingFromNodeId("docs/guide#Getting Started");

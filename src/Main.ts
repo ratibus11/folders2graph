@@ -94,6 +94,11 @@ export default class Folders2GraphPlugin extends Plugin {
 			this.__hierarchy,
 			() => this.saveSettings(),
 			() => this.refreshGraphLeaves(),
+			// Arrow reads this.__injector at call time, not at construction — the
+			// injector is assigned below, after foldingManager is constructed.
+			(id) =>
+				this.__injector.getGhostFolderIds().has(id) ||
+				this.__injector.getGhostHeadingIds().has(id),
 		);
 
 		this.__injector = new GraphDataInjector(
