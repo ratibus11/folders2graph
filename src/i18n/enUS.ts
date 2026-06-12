@@ -10,42 +10,42 @@ import { I18n } from "types/I18n";
 export const enUS: I18n = {
 	settings: {
 		showFolderNodes: {
-			name: "Show folder nodes",
-			desc: "Display your vault's folder structure as nodes in the graph view. Disable to focus on note-to-note connections only. (displayed by default)",
+			name: "Show folders",
+			desc: "Display the vault's folder structure in the graph view. (displayed by default)",
 		},
 		hideRootNode: {
-			name: "Hide root node",
-			desc: "Either hide or show the root folder node ('/') in the graph view. (displayed by default)",
+			name: "Hide root folder",
+			desc: "Hide or show the root folder node ('/') in the graph view. (displayed by default)",
 		},
 		nodeColor: {
-			name: "Node color",
-			desc: "Color to display nodes in the graph view. (defaulted to #5c8af5)",
+			name: "Folder node color",
+			desc: "Color used to display folder nodes in the graph view. (defaulted to #5c8af5)",
 		},
 		showHeadingNodes: {
 			name: "Show heading nodes",
-			desc: "Add a node for each Markdown heading and link the notes mentioned under it. Clicking a heading node opens the source note at that section. (hidden by default)",
+			desc: "Display each note's heading structure in the graph view. (hidden by default)",
 		},
 		headingNodeColor: {
 			name: "Heading node color",
 			desc: "Color used to display heading nodes in the graph view. (defaulted to #f5a55c)",
 		},
 		weightNodesBySubtree: {
-			name: "Weight nodes by full subtree",
-			desc: "When enabled, the size of a node reflects all of its visible structural descendants at every depth (folders, files, headings), not just its direct children. Folded nodes shrink because their hidden descendants no longer count. (disabled by default)",
+			name: "Weight nodes by their descendants",
+			desc: "When enabled, the size of a node is proportional to the number of linked descendants displayed in the graph. (disabled by default)",
 		},
 		folderFilterMode: {
 			name: "Folder filter mode",
-			desc: "Include: only the listed folders appear in the graph. Exclude: the listed folders are hidden from the graph. Has no effect when the filter list is empty. (exclude by default)",
+			desc: "Include: only the listed folders appear in the graph. Exclude: the listed folders are hidden from the graph.",
 			optionExclude: "Exclude",
 			optionInclude: "Include",
 		},
 		folderFilterList: {
 			name: "Folder filter list",
-			desc: "One vault-relative path per line. Each entry covers the folder and all of its descendants. Leading and trailing slashes are trimmed automatically. Leave empty to disable filtering. (empty by default)",
+			desc: "The list of folders to include in or exclude from the graph, depending on the selected filter mode. A list of paths relative to the vault root. One folder path per line.",
 		},
 		folderFilterHideFiles: {
 			name: "Hide filtered-out files",
-			desc: "When enabled, files whose folders are filtered out of the graph disappear entirely (together with their heading nodes) instead of remaining as disconnected native nodes. Has no effect when the filter list is empty. (disabled by default)",
+			desc: "When enabled, files and headings whose folders are excluded from the graph are excluded as well.",
 		},
 	},
 	commands: {
@@ -59,7 +59,7 @@ export const enUS: I18n = {
 			name: "Unfold all graph nodes",
 		},
 		toggleWeightNodesBySubtree: {
-			name: "Toggle subtree weight for graph nodes",
+			name: "Enable or disable weighting by descendants",
 		},
 		toggleRootNode: {
 			name: "Show or hide the root node",

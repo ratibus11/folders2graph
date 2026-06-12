@@ -9,42 +9,42 @@ import { I18n } from "types/I18n";
 export const frFR: I18n = {
 	settings: {
 		showFolderNodes: {
-			name: "Afficher les nœuds de dossier",
-			desc: "Affiche la structure des dossiers de votre coffre comme des nœuds dans la vue graphique. Désactiver pour ne voir que les liens entre les notes. (affiché par défaut)",
+			name: "Afficher les dossiers",
+			desc: "Afficher la structure des dossiers du coffre dans la vue graphique. (affiché par défaut)",
 		},
 		hideRootNode: {
-			name: "Cacher le nœud racine",
-			desc: "Cacher ou non le nœud du dossier racine ('/') dans la vue graphique. (affiché par défaut)",
+			name: "Cacher le dossier racine",
+			desc: "Cacher ou afficher le nœud du dossier racine ('/') dans la vue graphique. (affiché par défaut)",
 		},
 		nodeColor: {
-			name: "Couleur du nœud",
-			desc: "Couleur avec laquelle afficher les nœuds dans la vue graphique. (par défaut à #5c8af5)",
+			name: "Couleur des nœuds de dossier",
+			desc: "Couleur avec laquelle afficher les nœuds des dossiers dans la vue graphique. (par défaut à #5c8af5)",
 		},
 		showHeadingNodes: {
 			name: "Afficher les nœuds de titre",
-			desc: "Ajoute un nœud pour chaque titre Markdown et y rattache les notes mentionnées sous ce titre. Un clic sur un nœud de titre ouvre la note source à cette section. (caché par défaut)",
+			desc: "Afficher la structure des titres de chaque note dans la vue graphique. (caché par défaut)",
 		},
 		headingNodeColor: {
 			name: "Couleur des nœuds de titre",
-			desc: "Couleur des nœuds de titre dans la vue graphique. (par défaut à #f5a55c)",
+			desc: "Couleur avec laquelle afficher les nœuds des titres dans la vue graphique. (par défaut à #f5a55c)",
 		},
 		weightNodesBySubtree: {
-			name: "Pondérer les nœuds par leur sous-arbre complet",
-			desc: "Lorsqu'activé, la taille d'un nœud reflète tous ses descendants structurels visibles — dossiers, fichiers et titres à tous les niveaux — et non seulement ses enfants directs. Les nœuds repliés redeviennent petits car leurs descendants masqués ne comptent plus. (désactivé par défaut)",
+			name: "Pondérer les nœuds par leurs descendants",
+			desc: "Lorsqu'activé, la taille d'un nœud est proportionnelle au nombre de descendants liés et affichés dans le graphe. (désactivé par défaut)",
 		},
 		folderFilterMode: {
 			name: "Mode de filtrage des dossiers",
-			desc: "Inclure : seuls les dossiers listés apparaissent dans le graphe. Exclure : les dossiers listés sont masqués du graphe. Sans effet si la liste de filtrage est vide. (exclure par défaut)",
+			desc: "Inclure : seuls les dossiers listés apparaissent dans le graphe. Exclure : les dossiers listés sont masqués du graphe.",
 			optionExclude: "Exclure",
 			optionInclude: "Inclure",
 		},
 		folderFilterList: {
 			name: "Liste de filtrage des dossiers",
-			desc: "Un chemin relatif au coffre par ligne. Chaque entrée couvre le dossier et toute sa descendance. Les slashes de début et de fin sont retirés automatiquement. Laisser vide pour désactiver le filtrage. (vide par défaut)",
+			desc: "La liste des dossiers à inclure ou exclure du graphe, selon le mode de filtrage sélectionné. Est une liste de chemins relatifs à la racine du coffre. Un chemin de dossier par ligne.",
 		},
 		folderFilterHideFiles: {
 			name: "Masquer les fichiers hors filtre",
-			desc: "Lorsqu'activé, les fichiers dont les dossiers sont filtrés hors du graphe disparaissent entièrement (ainsi que leurs nœuds de titre) au lieu de rester comme des nœuds natifs déconnectés. Sans effet si la liste de filtrage est vide. (désactivé par défaut)",
+			desc: "Lorsqu'activé, les fichiers et titres dont les dossiers sont exclus du graphe sont également exclus.",
 		},
 	},
 	commands: {
@@ -58,7 +58,7 @@ export const frFR: I18n = {
 			name: "Déplier tous les nœuds du graphe",
 		},
 		toggleWeightNodesBySubtree: {
-			name: "Activer ou désactiver la pondération par sous-arbre",
+			name: "Activer ou désactiver la pondération par les descendants",
 		},
 		toggleRootNode: {
 			name: "Afficher ou masquer le nœud racine",
