@@ -232,7 +232,7 @@ export default class Folders2GraphPlugin extends Plugin {
 			const renderer = leaf.view.renderer;
 			if (!renderer) return;
 
-			// Restablish the original data setter in the render, then delete the custom one, then reload the leaf.
+			// Re-establish the original data setter in the renderer, then delete the custom one, then reload the leaf.
 			if (renderer.originalSetData) {
 				renderer.setData = renderer.originalSetData;
 				delete renderer.originalSetData;
@@ -240,9 +240,22 @@ export default class Folders2GraphPlugin extends Plugin {
 
 			this.__patcher.unpatch(renderer);
 
+			// Snapshot the per-leaf view options across the reload, exactly like
+			// refreshGraphLeaves does: the view's own `onload` resets them to the
+			// global graph options, which would wipe an open graph bookmark's
+			// configuration when the plugin is disabled.
+			const savedOptions = leaf.view.dataEngine?.getOptions?.();
+
 			leaf.view.unload();
 			leaf.view.load();
-			renderer.changed();
+
+			if (savedOptions !== undefined) {
+				leaf.view.dataEngine?.setOptions?.(savedOptions);
+			}
+
+			// Read the renderer from the view again: `load` may have created a
+			// fresh instance, and `changed` must run on the live one.
+			leaf.view.renderer?.changed();
 		});
 	}
 
@@ -310,6 +323,9 @@ export default class Folders2GraphPlugin extends Plugin {
 			// Install the contextmenu suppressor AFTER unload/load — the reload may rebuild
 			// the view's DOM, which would orphan a listener installed before it.
 			this.__interactions.installContextMenuSuppressor(leaf);
+			// Still needed when `savedOptions` is undefined (no dataEngine API):
+			// `setOptions` triggers its own update, but this branch would not.
+			// Obsidian coalesces redundant render requests, so the overlap is free.
 			leaf.view.renderer.changed();
 		});
 	}
