@@ -341,10 +341,14 @@ export class NodePrototypePatcher {
 					// acceptable in practice.
 					//
 					// @remarks
-					// A ghost node can be folded (e.g. user Shift+clicked it). The fold
-					// state survives across setData calls for as long as the ghost is
-					// displayed in the graph: FoldingManager.purge() exempts entries whose
-					// ID matches a currently-displayed ghost node. When the backing wikilink
+					// A ghost node can be folded (e.g. user Shift+clicked it). When it is,
+					// the combined state renders as an outlined half-disc (stroke only) so
+					// the ghost visual cue (contour) is preserved even in the collapsed shape.
+					// A real folded node renders as a filled half-disc as before.
+					//
+					// The fold state survives across setData calls for as long as the ghost
+					// is displayed in the graph: FoldingManager.purge() exempts entries whose
+					// ID is currently present in the graph snapshot. When the backing wikilink
 					// is removed (and the ghost disappears), the purge resumes and the fold
 					// state is discarded on the next setData pass.
 					//
@@ -382,17 +386,52 @@ export class NodePrototypePatcher {
 						}
 
 						this.circle.clear();
-						// The half-disc has a real fill so PIXI containsPoint works
-						// natively. Clear any hitArea left by a preceding ghost draw so
-						// it does not shadow the native geometry test.
-						this.circle.hitArea = null;
-						this.circle.beginFill(0xffffff, 1);
-						this.circle.moveTo(cx, cy);
-						this.circle.arc(cx, cy, baseRadius, angle - Math.PI / 2, angle + Math.PI / 2);
-						if (typeof this.circle.closePath === "function") {
-							this.circle.closePath();
+
+						if (isGhost) {
+							// ── FOLDED + GHOST: outlined half-disc ────────────────────────
+							// Stroke thickness matches the ghost ring (≈ 18 % of radius).
+							// The radius is inset by half the stroke width so the stroke sits
+							// fully inside the original bounding circle.
+							// The path is: arc (rounded side) then closePath (the flat chord),
+							// producing a fully-stroked half-disc perimeter with no fill.
+							const thickness = baseRadius * 0.18;
+							const r = baseRadius - thickness / 2;
+
+							// No fill — ghost convention. An explicit hitArea provides pointer
+							// hit-testing over the full half-disc area (same approach as the
+							// unfolded ghost ring).
+							this.circle.hitArea = {
+								contains: (hx: number, hy: number): boolean => {
+									const dx = hx - cx;
+									const dy = hy - cy;
+									return dx * dx + dy * dy <= baseRadius * baseRadius;
+								},
+							};
+							this.circle.lineStyle(thickness, 0xffffff, 1);
+							// Start at one end of the diameter (the chord endpoint), trace the
+							// arc (rounded side toward parent), then closePath draws the chord.
+							this.circle.moveTo(
+								cx + r * Math.cos(angle - Math.PI / 2),
+								cy + r * Math.sin(angle - Math.PI / 2),
+							);
+							this.circle.arc(cx, cy, r, angle - Math.PI / 2, angle + Math.PI / 2);
+							if (typeof this.circle.closePath === "function") {
+								this.circle.closePath();
+							}
+						} else {
+							// ── FOLDED (real node): filled half-disc ──────────────────────
+							// The half-disc has a real fill so PIXI containsPoint works
+							// natively. Clear any hitArea left by a preceding ghost draw so
+							// it does not shadow the native geometry test.
+							this.circle.hitArea = null;
+							this.circle.beginFill(0xffffff, 1);
+							this.circle.moveTo(cx, cy);
+							this.circle.arc(cx, cy, baseRadius, angle - Math.PI / 2, angle + Math.PI / 2);
+							if (typeof this.circle.closePath === "function") {
+								this.circle.closePath();
+							}
+							this.circle.endFill();
 						}
-						this.circle.endFill();
 
 						this.__f2gHalfDrawn = true;
 						this.__f2gGhostDrawn = false;
