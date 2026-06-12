@@ -9,6 +9,11 @@ import { I18n } from "types/I18n";
  */
 export const enUS: I18n = {
 	settings: {
+		sections: {
+			folders: "Folders",
+			folderFilter: "Folder filtering",
+			headings: "Headings",
+		},
 		showFolderNodes: {
 			name: "Show folders",
 			desc: "Display the vault's folder structure in the graph view. (displayed by default)",

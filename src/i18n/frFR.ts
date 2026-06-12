@@ -8,6 +8,11 @@ import { I18n } from "types/I18n";
  */
 export const frFR: I18n = {
 	settings: {
+		sections: {
+			folders: "Dossiers",
+			folderFilter: "Filtrage des dossiers",
+			headings: "Titres",
+		},
 		showFolderNodes: {
 			name: "Afficher les dossiers",
 			desc: "Afficher la structure des dossiers du coffre dans la vue graphique. (affiché par défaut)",

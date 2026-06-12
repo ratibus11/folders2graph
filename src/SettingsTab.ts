@@ -62,6 +62,21 @@ export class SettingsTab extends PluginSettingTab {
 
 		containerEl.empty();
 
+		// General settings come first, without a heading, then the controls are
+		// grouped under section headings — mirroring Obsidian's own settings pages.
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.weightNodesBySubtree.name)
+			.setDesc(this.__i18n.settings.weightNodesBySubtree.desc)
+			.addToggle((component) => {
+				component.setValue(this.__plugin.settings.weightNodesBySubtree).onChange(async (value) => {
+					this.__plugin.settings.weightNodesBySubtree = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
+		new Setting(containerEl).setName(this.__i18n.settings.sections.folders).setHeading();
+
 		new Setting(containerEl)
 			.setName(this.__i18n.settings.showFolderNodes.name)
 			.setDesc(this.__i18n.settings.showFolderNodes.desc)
@@ -83,6 +98,19 @@ export class SettingsTab extends PluginSettingTab {
 					this.__plugin.refreshGraphLeaves();
 				});
 			});
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.nodeColor.name)
+			.setDesc(this.__i18n.settings.nodeColor.desc)
+			.addColorPicker((component) => {
+				component.setValue(this.__plugin.settings.nodeColor).onChange(async (value) => {
+					this.__plugin.settings.nodeColor = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
+		new Setting(containerEl).setName(this.__i18n.settings.sections.folderFilter).setHeading();
 
 		new Setting(containerEl)
 			.setName(this.__i18n.settings.folderFilterMode.name)
@@ -148,16 +176,7 @@ export class SettingsTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl)
-			.setName(this.__i18n.settings.nodeColor.name)
-			.setDesc(this.__i18n.settings.nodeColor.desc)
-			.addColorPicker((component) => {
-				component.setValue(this.__plugin.settings.nodeColor).onChange(async (value) => {
-					this.__plugin.settings.nodeColor = value;
-					await this.__plugin.saveSettings();
-					this.__plugin.refreshGraphLeaves();
-				});
-			});
+		new Setting(containerEl).setName(this.__i18n.settings.sections.headings).setHeading();
 
 		new Setting(containerEl)
 			.setName(this.__i18n.settings.showHeadingNodes.name)
@@ -176,17 +195,6 @@ export class SettingsTab extends PluginSettingTab {
 			.addColorPicker((component) => {
 				component.setValue(this.__plugin.settings.headingNodeColor).onChange(async (value) => {
 					this.__plugin.settings.headingNodeColor = value;
-					await this.__plugin.saveSettings();
-					this.__plugin.refreshGraphLeaves();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName(this.__i18n.settings.weightNodesBySubtree.name)
-			.setDesc(this.__i18n.settings.weightNodesBySubtree.desc)
-			.addToggle((component) => {
-				component.setValue(this.__plugin.settings.weightNodesBySubtree).onChange(async (value) => {
-					this.__plugin.settings.weightNodesBySubtree = value;
 					await this.__plugin.saveSettings();
 					this.__plugin.refreshGraphLeaves();
 				});

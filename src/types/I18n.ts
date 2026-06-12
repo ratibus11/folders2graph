@@ -8,6 +8,13 @@
 export type I18n = {
 	/** Strings used in the settings tab. */
 	settings: {
+		/** Section headings used to group the controls, mirroring the way
+		 * Obsidian's own settings pages are organised. */
+		sections: {
+			folders: string;
+			folderFilter: string;
+			headings: string;
+		};
 		showFolderNodes: {
 			name: string;
 			desc: string;
