@@ -522,6 +522,14 @@ export class GraphDataInjector {
 	 * `ghostHeadingIds`.  Clicking a ghost heading in the graph will insert the
 	 * corresponding heading at the end of the target file.
 	 *
+	 * When the target file does NOT resolve (unresolved wikilink), the ghost
+	 * heading is attached to the unresolved node already present in `data.nodes`.
+	 * The unresolved node ID is looked up using the same resolution strategy as
+	 * `resolveGraphNodeId`: full path with/without `.md`, then basename.  If no
+	 * matching node is found the link is ignored silently.  Clicking such a ghost
+	 * heading creates the target file with the heading as its only content (see
+	 * `GraphInteractions.createGhostHeading`).
+	 *
 	 * @example
 	 * // Source file "notes/index.md" contains [[guide#Installation]] but
 	 * // "docs/guide.md" has no heading "Installation":
@@ -530,6 +538,16 @@ export class GraphDataInjector {
 	 * // data.nodes["docs/guide#Installation"] = { type: "f2g_heading_node", links: {} }
 	 * // data.nodes["docs/guide"].links["docs/guide#Installation"] = true
 	 * // ghostHeadingIds contains "docs/guide#Installation"
+	 *
+	 * @example
+	 * // Source file "notes/index.md" contains [[/a/b/c#missing]] and the file
+	 * // does not exist in the vault.  Obsidian stores the unresolved node as
+	 * // e.g. "/a/b/c.md" or "/a/b/c" in data.nodes:
+	 * //
+	 * // After injectGhostHeadingNodesForFile(data, "notes/index"):
+	 * // data.nodes["/a/b/c#missing"] = { type: "f2g_heading_node", links: {} }
+	 * // data.nodes["/a/b/c"].links["/a/b/c#missing"] = true
+	 * // ghostHeadingIds contains "/a/b/c#missing"
 	 */
 	private injectGhostHeadingNodesForFile(data: RendererData, nodeId: string): void {
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
@@ -553,48 +571,78 @@ export class GraphDataInjector {
 			// Ignore block references — they start with `^`.
 			if (fragment.startsWith("^")) continue;
 
-			// Resolve the target file.
+			// Try to resolve the target file via the metadata cache.
 			const targetFile = this.app.metadataCache.getFirstLinkpathDest(
 				getLinkpath(targetPart),
 				file.path,
 			);
-			if (!targetFile || targetFile.extension !== "md") continue;
 
-			// Determine the graph node ID for the target file.
-			const targetNodeId = this.resolveGraphNodeId(data, targetFile);
-			if (!targetNodeId || !data.nodes[targetNodeId]) continue;
+			if (targetFile && targetFile.extension === "md") {
+				// ── Resolved target ──────────────────────────────────────────────
+				// Determine the graph node ID for the target file.
+				const targetNodeId = this.resolveGraphNodeId(data, targetFile);
+				if (!targetNodeId || !data.nodes[targetNodeId]) continue;
 
-			// Check whether the target file already has this heading in its cache.
-			// Comparison is case-insensitive: Obsidian resolves [[note#introduction]]
-			// to the heading "## Introduction", so a case-only difference must not
-			// produce a duplicate ghost node.
-			const targetCache = this.app.metadataCache.getFileCache(targetFile);
-			const existingHeadings = targetCache?.headings ?? [];
-			const fragmentLower = fragment.toLowerCase();
-			const headingExists = existingHeadings.some(
-				(h) => h.heading.toLowerCase() === fragmentLower,
-			);
-			if (headingExists) continue;
+				// Check whether the target file already has this heading in its cache.
+				// Comparison is case-insensitive: Obsidian resolves [[note#introduction]]
+				// to the heading "## Introduction", so a case-only difference must not
+				// produce a duplicate ghost node.
+				const targetCache = this.app.metadataCache.getFileCache(targetFile);
+				const existingHeadings = targetCache?.headings ?? [];
+				const fragmentLower = fragment.toLowerCase();
+				const headingExists = existingHeadings.some(
+					(h) => h.heading.toLowerCase() === fragmentLower,
+				);
+				if (headingExists) continue;
 
-			// Build the ghost heading node ID.
-			const ghostId = this.buildHeadingNodeId(targetNodeId, fragment);
+				// Build and register the ghost heading node.
+				const ghostId = this.buildHeadingNodeId(targetNodeId, fragment);
+				if (data.nodes[ghostId]) continue;
 
-			// Deduplicate: if the node already exists (real or another ghost from a
-			// different source file referencing the same heading), skip.
-			if (data.nodes[ghostId]) continue;
+				data.nodes[ghostId] = { type: HEADING_NODE_TAG, links: {} };
+				data.nodes[targetNodeId].links[ghostId] = true;
+				this.hierarchy.addChild(targetNodeId, ghostId);
+				this.ghostHeadingIds.add(ghostId);
+			} else {
+				// ── Unresolved target ────────────────────────────────────────────
+				// The target file does not exist in the vault yet.  Look for the
+				// unresolved node in data.nodes using the same candidate set that
+				// resolveGraphNodeId would derive from a TFile, applied to the raw
+				// linkpath string directly.
+				//
+				// Candidates tried in order (matching resolveGraphNodeId):
+				//   1. rawPath as-is (e.g. "/a/b/c.md")
+				//   2. rawPath without .md extension (e.g. "/a/b/c")
+				//   3. basename only (e.g. "c")
+				const rawPath = getLinkpath(targetPart);
+				const noExtPath =
+					rawPath.endsWith(".md") ? rawPath.slice(0, -3) : null;
+				// Derive basename: last path segment, stripping .md if present.
+				const lastSlash = rawPath.lastIndexOf("/");
+				const lastSegment = lastSlash >= 0 ? rawPath.slice(lastSlash + 1) : rawPath;
+				const baseName = lastSegment.endsWith(".md")
+					? lastSegment.slice(0, -3)
+					: lastSegment;
 
-			// Create the ghost heading node.
-			data.nodes[ghostId] = {
-				type: HEADING_NODE_TAG,
-				links: {},
-			};
+				let unresolvedNodeId: string | null = null;
+				if (data.nodes[rawPath]) {
+					unresolvedNodeId = rawPath;
+				} else if (noExtPath && data.nodes[noExtPath]) {
+					unresolvedNodeId = noExtPath;
+				} else if (data.nodes[baseName]) {
+					unresolvedNodeId = baseName;
+				}
 
-			// Attach to the target file node (structural link).
-			data.nodes[targetNodeId].links[ghostId] = true;
-			this.hierarchy.addChild(targetNodeId, ghostId);
+				if (!unresolvedNodeId) continue;
 
-			// Record as a ghost heading.
-			this.ghostHeadingIds.add(ghostId);
+				const ghostId = this.buildHeadingNodeId(unresolvedNodeId, fragment);
+				if (data.nodes[ghostId]) continue;
+
+				data.nodes[ghostId] = { type: HEADING_NODE_TAG, links: {} };
+				data.nodes[unresolvedNodeId].links[ghostId] = true;
+				this.hierarchy.addChild(unresolvedNodeId, ghostId);
+				this.ghostHeadingIds.add(ghostId);
+			}
 		}
 	}
 

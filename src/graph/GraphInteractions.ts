@@ -315,7 +315,9 @@ export class GraphInteractions {
 
 	/**
 	 * Appends a new heading to the end of the target file referenced by a ghost
-	 * heading node, then triggers a full graph refresh.
+	 * heading node, then triggers a full graph refresh.  When the target file does
+	 * not yet exist it is created (along with any missing parent directories) with
+	 * the heading as its only content.
 	 *
 	 * @param ghostHeadingId A ghost heading node ID in the form
 	 *   `targetNodeId#headingText` (e.g. `"docs/guide#Installation"`).
@@ -335,6 +337,17 @@ export class GraphInteractions {
 	 *
 	 * The target file is resolved from the portion of the ID before the first
 	 * `#`. If the file cannot be found the method is a no-op.
+	 *
+	 * **Unresolved targets:** when `getFirstLinkpathDest` returns null (the file
+	 * does not exist), the vault path is derived from `filePart`:
+	 * - Leading `/` is stripped (node IDs for unresolved wikilinks may start with
+	 *   `/`).
+	 * - `.md` is appended when `filePart` has no recognised file extension.
+	 * - Parent directories are created first via `vault.createFolder` (errors are
+	 *   swallowed — `createFolder` creates intermediate directories automatically
+	 *   and throws if the directory already exists).
+	 * - The file is then created with `vault.create` containing `## headingText\n`
+	 *   as its sole content, making the file AND the heading real in one shot.
 	 *
 	 * **Limitation (inherited):** when the graph stores a node by basename only
 	 * (i.e. `resolveGraphNodeId` matched on `dest.basename`) and multiple files in
@@ -358,11 +371,47 @@ export class GraphInteractions {
 			getLinkpath(filePart),
 			"",
 		);
-		if (!targetFile) return;
 
-		await this.app.vault.process(targetFile, (content: string) => {
-			return content + "\n\n## " + headingText + "\n";
-		});
+		if (targetFile) {
+			// File exists — append the heading to the existing content.
+			await this.app.vault.process(targetFile, (content: string) => {
+				return content + "\n\n## " + headingText + "\n";
+			});
+		} else {
+			// File does not exist — derive a vault path from filePart and create
+			// the file with the heading as its sole content.
+			//
+			// Strip the leading "/" that unresolved wikilink node IDs may carry
+			// (e.g. "/a/b/c" → "a/b/c").  Then ensure the path ends with ".md"
+			// unless the filePart already has a file extension (contains a dot
+			// after the last path separator).
+			let vaultPath = filePart.startsWith("/") ? filePart.slice(1) : filePart;
+			const lastSlash = vaultPath.lastIndexOf("/");
+			const lastSegment = lastSlash >= 0 ? vaultPath.slice(lastSlash + 1) : vaultPath;
+			if (!lastSegment.includes(".")) {
+				vaultPath = vaultPath + ".md";
+			}
+
+			// Create parent directories if they are missing.  vault.createFolder
+			// creates intermediate directories automatically; errors are swallowed
+			// because the directory may already exist.
+			const parentDir = lastSlash >= 0
+				? (filePart.startsWith("/") ? filePart.slice(1, lastSlash) : filePart.slice(0, lastSlash))
+				: "";
+			if (parentDir) {
+				try {
+					await this.app.vault.createFolder(parentDir);
+				} catch {
+					// Directory already exists or was created concurrently — ignore.
+				}
+			}
+
+			try {
+				await this.app.vault.create(vaultPath, "## " + headingText + "\n");
+			} catch {
+				// Creation failed (e.g. file appeared concurrently) — refresh anyway.
+			}
+		}
 
 		this.refreshGraphLeaves();
 	}
