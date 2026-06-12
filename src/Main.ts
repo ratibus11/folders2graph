@@ -60,6 +60,23 @@ export default class Folders2GraphPlugin extends Plugin {
 	 * it directly from outside `saveSettings`. */
 	private __savePromise: Promise<void> = Promise.resolve();
 
+	/**
+	 * Debounce timer for vault-event-driven graph refreshes.
+	 *
+	 * @remarks
+	 * Folder deletions do not emit any metadata-cache event because folders are
+	 * not first-class Obsidian nodes — only `vault.on("delete")` fires for a
+	 * deleted folder, and only `vault.on("rename")` fires for each file inside a
+	 * moved folder (one event per file).  Native `metadataCache` events therefore
+	 * miss empty-folder removals entirely, leaving ghost heading/folder states
+	 * stale in the graph.
+	 *
+	 * This timer absorbs burst operations (e.g. a folder move triggers N rename
+	 * events in rapid succession) and coalesces them into a single
+	 * {@link refreshGraphLeaves} call 300 ms after the last event.
+	 */
+	private __vaultRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
 	private __hierarchy!: StructuralHierarchy;
 	private __foldingManager!: FoldingManager;
 	private __injector!: GraphDataInjector;
@@ -213,6 +230,28 @@ export default class Folders2GraphPlugin extends Plugin {
 			}),
 		);
 
+		// Vault structural events — refresh the graph so ghost states are kept
+		// accurate after file/folder create, delete, and rename operations.
+		//
+		// A 300 ms debounce absorbs burst operations: moving a folder emits one
+		// `rename` event per contained file, and deleting an empty folder emits
+		// `delete` but never a metadataCache event (folders are not Obsidian
+		// metadata nodes).  Without this listener, ghost heading/folder rings
+		// would remain stale after such operations because no `setData` is
+		// re-pushed by the native graph engine.
+		const scheduleVaultRefresh = () => {
+			if (this.__vaultRefreshTimer !== null) {
+				clearTimeout(this.__vaultRefreshTimer);
+			}
+			this.__vaultRefreshTimer = setTimeout(() => {
+				this.__vaultRefreshTimer = null;
+				this.refreshGraphLeaves();
+			}, 300);
+		};
+		this.registerEvent(this.app.vault.on("create", scheduleVaultRefresh));
+		this.registerEvent(this.app.vault.on("delete", scheduleVaultRefresh));
+		this.registerEvent(this.app.vault.on("rename", scheduleVaultRefresh));
+
 		// Iterates through all tabs which are of type "graph".
 		this.refreshGraphLeaves();
 	}
@@ -228,6 +267,13 @@ export default class Folders2GraphPlugin extends Plugin {
 	 *    unpatches the node prototype, and reloads the view.
 	 */
 	public override onunload(): void {
+		// Cancel any pending vault-refresh debounce so it cannot fire after the
+		// plugin subsystems have been torn down.
+		if (this.__vaultRefreshTimer !== null) {
+			clearTimeout(this.__vaultRefreshTimer);
+			this.__vaultRefreshTimer = null;
+		}
+
 		this.__interactions.unwrapOpenLinkText();
 
 		// Remove Shift tracking listeners.
