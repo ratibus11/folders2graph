@@ -591,7 +591,10 @@ export class GraphDataInjector {
 	 * Returns each ancestor folder path of `nodeId` as a `/`-prefixed string,
 	 * including the vault root `/`.
 	 *
-	 * @param nodeId Graph node ID of the file or folder.
+	 * @param nodeId Graph node ID of the file or folder. May begin with a `/`
+	 *   (e.g. unresolved wikilinks such as `"/a/b/c.md"`); leading-slash IDs
+	 *   produce an empty first segment after `split("/")` which is filtered out
+	 *   before the cumulative path is built.
 	 * @returns Array of `/`-prefixed folder paths from root to the immediate
 	 *   parent, in ascending depth order.
 	 *
@@ -599,12 +602,20 @@ export class GraphDataInjector {
 	 * const nodeId = "folder/subfolder/file.md";
 	 * const result = getNodeParentFolders(nodeId);
 	 * // result = ["/", "/folder", "/folder/subfolder"]
+	 *
+	 * @example
+	 * // Unresolved wikilink with leading slash — empty segments filtered out.
+	 * const nodeId = "/a/b/c.md";
+	 * const result = getNodeParentFolders(nodeId);
+	 * // result = ["/", "/a", "/a/b"]
 	 */
 	private getNodeParentFolders(nodeId: string): string[] {
 		const subFolders = ["/"];
 
 		const splittedNodeId = nodeId.split("/");
-		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1);
+		// Filter empty segments that arise from a leading "/" (unresolved wikilinks
+		// such as "/a/b/c.md" produce ["", "a", "b", "c.md"] after split).
+		const subFoldersSteps = splittedNodeId.slice(0, splittedNodeId.length - 1).filter((e) => e != "");
 
 		let currentFolder = "";
 		subFoldersSteps.forEach((subfolder) => {
