@@ -34,6 +34,14 @@ export const frFR: I18n = {
 			name: "Couleur des nœuds de titre",
 			desc: "Couleur avec laquelle afficher les nœuds des titres dans la vue graphique. (par défaut à #f5a55c)",
 		},
+		headingLinkAnchorMode: {
+			name: "Ancrage des liens vers les titres",
+			desc: "Comment les liens vers un titre ([[note#Titre]]) sont ancrés dans le graphe — quel bout (fichier ou nœud de titre) est utilisé de chaque côté. (titre → titre par défaut)",
+			optionFileFile: "Fichier → fichier",
+			optionFileHeading: "Fichier → titre",
+			optionHeadingFile: "Titre → fichier",
+			optionHeadingHeading: "Titre → titre",
+		},
 		weightNodesBySubtree: {
 			name: "Pondérer les nœuds par leurs descendants",
 			desc: "Lorsqu'activé, la taille d'un nœud est proportionnelle au nombre de descendants liés et affichés dans le graphe. (désactivé par défaut)",

@@ -1,4 +1,4 @@
-import { App, OpenViewState, PaneType, TFolder, Workspace } from "obsidian";
+import { App, OpenViewState, PaneType, TFile, TFolder, Workspace, getLinkpath } from "obsidian";
 import { GraphLeafWithCustomRenderer } from "interfaces/GraphLeafWithCustomRenderer";
 import { Nullable } from "types/Nullable";
 
@@ -28,6 +28,9 @@ export class GraphInteractions {
 	private getFolderNodeIds: () => Set<string>;
 	private getAllNodeIds: () => Set<string>;
 	private handleFoldToggle: (nodeId: string) => void;
+	private getGhostFolderIds: () => Set<string>;
+	private getGhostHeadingIds: () => Set<string>;
+	private refreshGraphLeaves: () => void;
 
 	/** True while the Shift key is held down. Tracked via capture-phase
 	 * keydown/keyup on window, with a blur-reset to handle cases where the
@@ -77,24 +80,37 @@ export class GraphInteractions {
 	};
 
 	/**
-	 * @param app               Obsidian application instance.
-	 * @param getFolderNodeIds  Returns the set of currently injected folder
+	 * @param app                  Obsidian application instance.
+	 * @param getFolderNodeIds     Returns the set of currently injected folder
 	 *   node IDs; consulted by the `openLinkText` wrapper.
-	 * @param getAllNodeIds      Returns the full set of node IDs from the last
+	 * @param getAllNodeIds         Returns the full set of node IDs from the last
 	 *   `setData` pass; used to validate Shift+click targets.
-	 * @param handleFoldToggle  Callback invoked when a Shift+left-click on a
+	 * @param handleFoldToggle     Callback invoked when a Shift+left-click on a
 	 *   valid graph node is detected.
+	 * @param getGhostFolderIds    Returns the set of ghost folder IDs (folders
+	 *   that were injected but have no real `TFolder` in the vault).
+	 * @param getGhostHeadingIds   Returns the set of ghost heading IDs (headings
+	 *   synthesised from unresolved `#`-fragment wikilinks).
+	 * @param refreshGraphLeaves   Triggers a full graph refresh; called after
+	 *   ghost content has been created so the re-render reflects the new vault
+	 *   state.
 	 */
 	constructor(
 		app: App,
 		getFolderNodeIds: () => Set<string>,
 		getAllNodeIds: () => Set<string>,
 		handleFoldToggle: (nodeId: string) => void,
+		getGhostFolderIds: () => Set<string>,
+		getGhostHeadingIds: () => Set<string>,
+		refreshGraphLeaves: () => void,
 	) {
 		this.app = app;
 		this.getFolderNodeIds = getFolderNodeIds;
 		this.getAllNodeIds = getAllNodeIds;
 		this.handleFoldToggle = handleFoldToggle;
+		this.getGhostFolderIds = getGhostFolderIds;
+		this.getGhostHeadingIds = getGhostHeadingIds;
+		this.refreshGraphLeaves = refreshGraphLeaves;
 	}
 
 	/**
@@ -167,21 +183,25 @@ export class GraphInteractions {
 	 * Wraps `workspace.openLinkText` so that clicks on folder nodes reveal the
 	 * corresponding folder in the file explorer instead of failing to resolve a
 	 * non-existent file, so that Shift+left-click on any graph node toggles
-	 * its fold state instead of navigating, and so that Mod+left-click on a
-	 * folder node pre-fills the graph search field with a path filter for that
-	 * folder.
+	 * its fold state instead of navigating, so that Mod+left-click on a folder
+	 * node pre-fills the graph search field with a path filter for that folder,
+	 * and so that a plain click on a ghost node creates the missing vault content.
 	 *
 	 * @remarks
 	 * The wrapper only intercepts linktexts that match a currently-injected
-	 * folder node ID, so regular wikilink clicks are unaffected.
+	 * folder node ID or a known ghost node, so regular wikilink clicks are
+	 * unaffected.
 	 *
 	 * Guard priority (highest to lowest):
 	 * 1. Shift held + graph active + any node → fold toggle.
 	 * 2. Mod held + graph active + folder node (non-root) → path-filter prefill.
-	 * 3. Folder node (any) → reveal in file explorer.
-	 * 4. All other linktexts → original `openLinkText`.
+	 * 3. Ghost folder node → create the vault folder, refresh. Real folder
+	 *    nodes continue to step 5.
+	 * 4. Ghost heading node → append the heading to the target file, refresh.
+	 * 5. Real folder node (any) → reveal in file explorer.
+	 * 6. All other linktexts → original `openLinkText`.
 	 *
-	 * Both gated branches require the most recent leaf to be a graph view:
+	 * Both gated branches (1, 2) require the most recent leaf to be a graph view:
 	 * clicking a graph node activates its leaf before `openLinkText` fires,
 	 * while a Shift/Mod+click on an editor wikilink keeps the editor leaf
 	 * active — so editor links are never accidentally swallowed.
@@ -228,6 +248,20 @@ export class GraphInteractions {
 				return Promise.resolve();
 			}
 
+			// Plain click on a ghost folder → create the vault folder and refresh
+			// so the graph re-renders the node as a real folder (filled disc).
+			// The folder may have been created concurrently between the click and
+			// this handler — createFolder errors are swallowed silently.
+			if (this.getGhostFolderIds().has(linktext)) {
+				return this.createGhostFolder(linktext);
+			}
+
+			// Plain click on a ghost heading → append the heading to the end of
+			// the target file and refresh.
+			if (this.getGhostHeadingIds().has(linktext)) {
+				return this.createGhostHeading(linktext);
+			}
+
 			if (this.getFolderNodeIds().has(linktext)) {
 				this.revealFolderInExplorer(linktext);
 				return Promise.resolve();
@@ -244,6 +278,227 @@ export class GraphInteractions {
 		if (!this.originalOpenLinkText) return;
 		this.app.workspace.openLinkText = this.originalOpenLinkText;
 		this.originalOpenLinkText = null;
+	}
+
+	/**
+	 * Creates the vault folder backing a ghost folder node, triggers a full
+	 * graph refresh so the node transitions from ghost (outlined) to real
+	 * (filled), then highlights the new folder in the file explorer — the same
+	 * action a click on a regular folder node performs.
+	 *
+	 * @param folderNodeId A `/`-prefixed ghost folder node ID (e.g. `"/a/b"`).
+	 * @returns A `Promise` that resolves after the folder is created and the
+	 *   refresh is scheduled.
+	 *
+	 * @remarks
+	 * `app.vault.createFolder` is called with `await` so the refresh fires only
+	 * after the folder exists in the vault and the metadata cache can recognise
+	 * it as a real `TFolder` on the next `setData` pass.
+	 *
+	 * If the folder already exists (concurrent creation) the error is swallowed
+	 * silently — the refresh still runs so the graph state is consistent.
+	 *
+	 * **Implementation note:** in practice `vault.createFolder` creates all missing
+	 * intermediate directories automatically (e.g. calling it with `"a/b/c"` creates
+	 * `a`, `a/b`, and `a/b/c` in one shot). This behaviour has been observed
+	 * consistently but is not guaranteed by the public Obsidian API. If it ever
+	 * changes, the error will be swallowed here and the click will have no visible
+	 * effect on the vault.
+	 */
+	private async createGhostFolder(folderNodeId: string): Promise<void> {
+		const vaultPath = folderNodeId.slice(1);
+		try {
+			await this.app.vault.createFolder(vaultPath);
+		} catch {
+			// Folder may have been created concurrently — ignore and refresh anyway.
+		}
+		this.refreshGraphLeaves();
+		// Mirror the classic folder-node click: now that the folder exists,
+		// highlight it in the file explorer.
+		this.revealFolderInExplorer(folderNodeId);
+	}
+
+	/**
+	 * Appends a new heading to the end of the target file referenced by a ghost
+	 * heading node, triggers a full graph refresh, then opens the note at the
+	 * freshly created section via the native link handler — the same action a
+	 * click on a regular heading node performs.  When the target file does not
+	 * yet exist it is created (along with any missing parent directories) with
+	 * the heading as its only content.
+	 *
+	 * @param ghostHeadingId A ghost heading node ID in the form
+	 *   `targetNodeId#headingText` (e.g. `"docs/guide#Installation"`).
+	 * @returns A `Promise` that resolves after the heading is written and the
+	 *   refresh is scheduled.
+	 *
+	 * @remarks
+	 * The heading is inserted as a level-2 Markdown heading (`## headingText`)
+	 * on its own line: when the document already ends with a newline the
+	 * heading is appended directly, otherwise a single newline is added first —
+	 * no blank line is ever introduced between the content and the heading.
+	 * Level 2 is chosen as a reasonable default that fits under a typical
+	 * top-level (`#`) overview section without requiring the user to
+	 * restructure the document.
+	 *
+	 * `app.vault.process` is used instead of a read→modify→write cycle because
+	 * it holds an exclusive lock on the file for the duration of the callback,
+	 * preventing conflicts with other concurrent writers (e.g. the sync engine).
+	 *
+	 * The target file is resolved from the portion of the ID before the first
+	 * `#`. If the file cannot be found the method is a no-op.
+	 *
+	 * **Unresolved targets:** when `getFirstLinkpathDest` returns null (the file
+	 * does not exist), the vault path is derived from `filePart`:
+	 * - Leading `/` is stripped (node IDs for unresolved wikilinks may start with
+	 *   `/`).
+	 * - `.md` is appended when `filePart` has no recognised file extension.
+	 * - Parent directories are created first via `vault.createFolder` (errors are
+	 *   swallowed — `createFolder` creates intermediate directories automatically
+	 *   and throws if the directory already exists).
+	 * - The file is then created with `vault.create` containing `## headingText\n`
+	 *   as its sole content, making the file AND the heading real in one shot.
+	 *
+	 * **Limitation (inherited):** when the graph stores a node by basename only
+	 * (i.e. `resolveGraphNodeId` matched on `dest.basename`) and multiple files in
+	 * the vault share that basename, `getFirstLinkpathDest` may resolve to the
+	 * wrong file.  This is a pre-existing limitation of the `resolveGraphNodeId`
+	 * ID scheme and is not specific to ghost headings.
+	 */
+	private async createGhostHeading(ghostHeadingId: string): Promise<void> {
+		// Split on the FIRST `#` to derive filePart and headingText.
+		// Sync contract: NodePrototypePatcher.extractHeadingFromNodeId uses the
+		// same first-`#` split.  Both must stay aligned on the `path#heading` format.
+		const hashIdx = ghostHeadingId.indexOf("#");
+		if (hashIdx < 0) return;
+
+		const filePart = ghostHeadingId.slice(0, hashIdx);
+		const headingText = ghostHeadingId.slice(hashIdx + 1);
+
+		// Resolve the target file via the metadata cache (handles both full-path
+		// and basename-only node IDs).
+		const targetFile: Nullable<TFile> = this.app.metadataCache.getFirstLinkpathDest(
+			getLinkpath(filePart),
+			"",
+		);
+
+		// File the heading ends up in, used to wait for metadata indexing below.
+		let writtenFile: Nullable<TFile> = targetFile;
+
+		if (targetFile) {
+			// File exists — append the heading on its own line: when the document
+			// already ends with a newline (last line empty) the heading is written
+			// directly; otherwise a single newline is added first. No blank line
+			// is ever inserted between the existing content and the heading.
+			await this.app.vault.process(targetFile, (content: string) => {
+				const separator = content === "" || content.endsWith("\n") ? "" : "\n";
+				return content + separator + "## " + headingText + "\n";
+			});
+		} else {
+			// File does not exist — derive a vault path from filePart and create
+			// the file with the heading as its sole content.
+			//
+			// Strip the leading "/" that unresolved wikilink node IDs may carry
+			// (e.g. "/a/b/c" → "a/b/c").  Then ensure the path ends with ".md"
+			// unless the filePart already has a file extension (contains a dot
+			// after the last path separator).
+			let vaultPath = filePart.startsWith("/") ? filePart.slice(1) : filePart;
+			const lastSlash = vaultPath.lastIndexOf("/");
+			const lastSegment = lastSlash >= 0 ? vaultPath.slice(lastSlash + 1) : vaultPath;
+			if (!lastSegment.includes(".")) {
+				vaultPath = vaultPath + ".md";
+			}
+
+			// Create parent directories if they are missing.  vault.createFolder
+			// creates intermediate directories automatically; errors are swallowed
+			// because the directory may already exist. The parent is derived from
+			// `vaultPath` (whose indices `lastSlash` refers to) — NOT from
+			// `filePart`, whose leading `/` would shift every index by one.
+			const parentDir = lastSlash >= 0 ? vaultPath.slice(0, lastSlash) : "";
+			if (parentDir) {
+				try {
+					await this.app.vault.createFolder(parentDir);
+				} catch {
+					// Directory already exists or was created concurrently — ignore.
+				}
+			}
+
+			try {
+				writtenFile = await this.app.vault.create(vaultPath, "## " + headingText + "\n");
+			} catch {
+				// Creation failed (e.g. file appeared concurrently) — refresh anyway.
+			}
+		}
+
+		this.refreshGraphLeaves();
+
+		// Mirror the classic heading-node click: open the note at the freshly
+		// created section. The native `path#heading` resolution reads the
+		// metadata cache, which indexes file changes ASYNCHRONOUSLY — opening
+		// immediately would land at the top of the note without the section
+		// highlight. Wait for the cache to index the new heading first.
+		this.__openAtHeadingOnceIndexed(ghostHeadingId, writtenFile, headingText);
+	}
+
+	/**
+	 * Opens the note behind `ghostHeadingId` at its heading section once the
+	 * metadata cache has indexed the heading, so the native scroll-and-highlight
+	 * behaviour works as it does for a click on a regular heading node.
+	 *
+	 * @param ghostHeadingId Heading node ID in Obsidian's `path#heading` format,
+	 *   passed verbatim to the native `openLinkText`.
+	 * @param file           The file the heading was just written to, or `null`
+	 *   when the write failed — the note is then opened immediately, best effort.
+	 * @param headingText    Heading text to wait for (case-insensitive match).
+	 *
+	 * @remarks
+	 * The metadata cache parses modified files asynchronously: right after
+	 * `vault.process`/`vault.create` the new heading is not indexed yet, and the
+	 * native fragment resolution silently fails (the note opens at the top with
+	 * no highlight). This helper opens immediately when the heading is already
+	 * indexed, otherwise subscribes to `metadataCache.on("changed")` for the
+	 * target file, with a 2-second timeout fallback so the note always opens
+	 * even if the event never fires.
+	 */
+	private __openAtHeadingOnceIndexed(
+		ghostHeadingId: string,
+		file: Nullable<TFile>,
+		headingText: string,
+	): void {
+		const open = () => {
+			void this.originalOpenLinkText?.(ghostHeadingId, "", false);
+		};
+
+		if (!file) {
+			open();
+			return;
+		}
+
+		const wanted = headingText.toLowerCase();
+		const isIndexed = () => {
+			const headings = this.app.metadataCache.getFileCache(file)?.headings;
+			return !!headings?.some((h) => h.heading.toLowerCase() === wanted);
+		};
+
+		if (isIndexed()) {
+			open();
+			return;
+		}
+
+		let done = false;
+		const finish = () => {
+			if (done) return;
+			done = true;
+			this.app.metadataCache.offref(ref);
+			window.clearTimeout(timer);
+			open();
+		};
+
+		const ref = this.app.metadataCache.on("changed", (changed: TFile) => {
+			if (changed.path === file.path && isIndexed()) {
+				finish();
+			}
+		});
+		const timer = window.setTimeout(finish, 2000);
 	}
 
 	/**

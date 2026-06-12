@@ -2,6 +2,7 @@ import { getI18n } from "i18n";
 import Folders2GraphPlugin from "Main";
 import { App, PluginSettingTab, Setting } from "obsidian";
 import { I18n } from "types/I18n";
+import { Settings } from "interfaces/Settings";
 
 /**
  * Obsidian settings tab for the Folders 2 Graph plugin.
@@ -144,6 +145,23 @@ export class SettingsTab extends PluginSettingTab {
 					await this.__plugin.saveSettings();
 					this.__plugin.refreshGraphLeaves();
 				});
+			});
+
+		new Setting(headingsGroup)
+			.setName(this.__i18n.settings.headingLinkAnchorMode.name)
+			.setDesc(this.__i18n.settings.headingLinkAnchorMode.desc)
+			.addDropdown((component) => {
+				component
+					.addOption("file-file", this.__i18n.settings.headingLinkAnchorMode.optionFileFile)
+					.addOption("file-heading", this.__i18n.settings.headingLinkAnchorMode.optionFileHeading)
+					.addOption("heading-file", this.__i18n.settings.headingLinkAnchorMode.optionHeadingFile)
+					.addOption("heading-heading", this.__i18n.settings.headingLinkAnchorMode.optionHeadingHeading)
+					.setValue(this.__plugin.settings.headingLinkAnchorMode)
+					.onChange(async (value: string) => {
+						this.__plugin.settings.headingLinkAnchorMode = value as Settings["headingLinkAnchorMode"];
+						await this.__plugin.saveSettings();
+						this.__plugin.refreshGraphLeaves();
+					});
 			});
 
 		// ── Folder filtering ────────────────────────────────────────────────

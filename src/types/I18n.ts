@@ -36,6 +36,14 @@ export type I18n = {
 			name: string;
 			desc: string;
 		};
+		headingLinkAnchorMode: {
+			name: string;
+			desc: string;
+			optionFileFile: string;
+			optionFileHeading: string;
+			optionHeadingFile: string;
+			optionHeadingHeading: string;
+		};
 		weightNodesBySubtree: {
 			name: string;
 			desc: string;

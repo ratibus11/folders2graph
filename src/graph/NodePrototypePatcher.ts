@@ -33,6 +33,7 @@ export class NodePrototypePatcher {
 	private handleRecursiveUnfold: (nodeId: string) => void;
 	private setSuppressNextContextMenu: (value: boolean) => void;
 	private getSuppressNextContextMenu: () => boolean;
+	private isGhostNode: (nodeId: string) => boolean;
 
 	/**
 	 * @param settings                    Plugin settings; read for node colours.
@@ -46,6 +47,11 @@ export class NodePrototypePatcher {
 	 *   consumed by the DOM `contextmenu` listener.
 	 * @param setSuppressNextContextMenu  Sets the suppress-context-menu flag.
 	 *   Called by the PIXI rightdown wrapper when swallowing a gesture.
+	 * @param isGhostNode                 Returns `true` when a node ID belongs
+	 *   to a ghost folder or ghost heading (content that exists only as a
+	 *   virtual placeholder pending vault creation).  Also applies to Obsidian's
+	 *   native `"unresolved"` node type, which is tested directly on the instance
+	 *   without going through this callback.
 	 */
 	constructor(
 		settings: Settings,
@@ -53,12 +59,14 @@ export class NodePrototypePatcher {
 		handleRecursiveUnfold: (nodeId: string) => void,
 		getSuppressNextContextMenu: () => boolean,
 		setSuppressNextContextMenu: (value: boolean) => void,
+		isGhostNode: (nodeId: string) => boolean,
 	) {
 		this.settings = settings;
 		this.hierarchy = hierarchy;
 		this.handleRecursiveUnfold = handleRecursiveUnfold;
 		this.getSuppressNextContextMenu = getSuppressNextContextMenu;
 		this.setSuppressNextContextMenu = setSuppressNextContextMenu;
+		this.isGhostNode = isGhostNode;
 	}
 
 	/**
@@ -288,6 +296,41 @@ export class NodePrototypePatcher {
 				}
 
 				const isCollapsed = patcher.hierarchy.isCollapsed(this.id);
+				// A node is "ghost" when its ID is in the ghost-folder / ghost-heading
+				// sets, or when Obsidian itself marks it as an unresolved wikilink
+				// target (type === "unresolved"). The collapsed state takes priority:
+				// a ghost that is also folded renders as a half-disc, not a ring.
+				const isGhost =
+					this.type === "unresolved" ||
+					patcher.isGhostNode(this.id);
+
+				// ── Shared geometry measurement ─────────────────────────────────────────
+				// Measure the native base radius and centre from the local PIXI geometry
+				// on the first frame that needs a custom draw (before we clear it).  Both
+				// values are cached per-instance so subsequent frames skip the measurement.
+				//
+				// Obsidian draws the circle at a large local radius (~100) and uses the
+				// DisplayObject scale for sizing, so `getSize()` returns the wrong value
+				// here — we must read local geometry instead.  The centre is captured
+				// because PIXI geometry is not necessarily centred on (0, 0): drawing at
+				// (0, 0) would shift the disc by one radius.  Fallbacks: radius=100,
+				// centre=(0, 0).
+				//
+				// The measurement block runs for collapsed AND ghost branches; it is placed
+				// here (before the if/else) so neither branch duplicates it.
+				if ((isCollapsed || isGhost) && !this.__f2gBaseRadius) {
+					let r = 0;
+					let cx = 0;
+					let cy = 0;
+					if (typeof this.circle.getLocalBounds === "function") {
+						const b = this.circle.getLocalBounds();
+						r = Math.max(b.width, b.height) / 2;
+						cx = b.x + b.width / 2;
+						cy = b.y + b.height / 2;
+					}
+					this.__f2gBaseRadius = r > 0 && isFinite(r) ? r : 100;
+					this.__f2gBaseCenter = { x: cx, y: cy };
+				}
 
 				if (isCollapsed) {
 					// ── FOLDED STATE ──────────────────────────────────────────────────────
@@ -296,35 +339,24 @@ export class NodePrototypePatcher {
 					//   • any full-circle repaint by Obsidian (e.g. on hover) is overridden.
 					// This is bounded to the number of visible collapsed nodes, so it is
 					// acceptable in practice.
+					//
+					// @remarks
+					// A ghost node can be folded (e.g. user Shift+clicked it). When it is,
+					// the combined state renders as an outlined half-disc (stroke only) so
+					// the ghost visual cue (contour) is preserved even in the collapsed shape.
+					// A real folded node renders as a filled half-disc as before.
+					//
+					// The fold state survives across setData calls for as long as the ghost
+					// is displayed in the graph: FoldingManager.purge() exempts entries whose
+					// ID is currently present in the graph snapshot. When the backing wikilink
+					// is removed (and the ghost disappears), the purge resumes and the fold
+					// state is discarded on the next setData pass.
+					//
+					// Color: draw in white (0xffffff) so that Obsidian's per-frame `tint`
+					// on the DisplayObject applies the correct node colour (hover included),
+					// exactly as the native full circle does.
 					try {
-						// Measure the native base radius AND centre from the local geometry on
-						// first encounter (before we clear it). Both are cached per-instance.
-						//
-						// Obsidian draws the circle at a large local radius (~100) and uses the
-						// DisplayObject scale for sizing, so `getSize()` returns the wrong
-						// value here — we must read local geometry instead.
-						//
-						// The centre must be captured because PIXI geometry is not necessarily
-						// centred on (0, 0) — drawing at (0, 0) would appear shifted by one
-						// radius. Fallbacks: radius=100, centre=(0, 0).
-						//
-						// Color: draw in white (0xffffff) so that Obsidian's per-frame `tint`
-						// on the DisplayObject applies the correct node colour (hover included),
-						// exactly as the native full circle does.
-						if (!this.__f2gBaseRadius) {
-							let r = 0;
-							let cx = 0;
-							let cy = 0;
-							if (typeof this.circle.getLocalBounds === "function") {
-								const b = this.circle.getLocalBounds();
-								r = Math.max(b.width, b.height) / 2;
-								cx = b.x + b.width / 2;
-								cy = b.y + b.height / 2;
-							}
-							this.__f2gBaseRadius = r > 0 && isFinite(r) ? r : 100;
-							this.__f2gBaseCenter = { x: cx, y: cy };
-						}
-						const baseRadius: number = this.__f2gBaseRadius;
+						const baseRadius: number = this.__f2gBaseRadius ?? 100;
 						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
 						const cx: number = baseCenter.x;
 						const cy: number = baseCenter.y;
@@ -354,18 +386,105 @@ export class NodePrototypePatcher {
 						}
 
 						this.circle.clear();
-						this.circle.beginFill(0xffffff, 1);
-						this.circle.moveTo(cx, cy);
-						this.circle.arc(cx, cy, baseRadius, angle - Math.PI / 2, angle + Math.PI / 2);
-						if (typeof this.circle.closePath === "function") {
-							this.circle.closePath();
+
+						if (isGhost) {
+							// ── FOLDED + GHOST: outlined half-disc ────────────────────────
+							// Stroke thickness matches the ghost ring (≈ 18 % of radius).
+							// The radius is inset by half the stroke width so the stroke sits
+							// fully inside the original bounding circle.
+							// The path is: arc (rounded side) then closePath (the flat chord),
+							// producing a fully-stroked half-disc perimeter with no fill.
+							const thickness = baseRadius * 0.18;
+							const r = baseRadius - thickness / 2;
+
+							// No fill — ghost convention. An explicit hitArea provides pointer
+							// hit-testing over the full half-disc area (same approach as the
+							// unfolded ghost ring).
+							this.circle.hitArea = {
+								contains: (hx: number, hy: number): boolean => {
+									const dx = hx - cx;
+									const dy = hy - cy;
+									return dx * dx + dy * dy <= baseRadius * baseRadius;
+								},
+							};
+							this.circle.lineStyle(thickness, 0xffffff, 1);
+							// Start at one end of the diameter (the chord endpoint), trace the
+							// arc (rounded side toward parent), then closePath draws the chord.
+							this.circle.moveTo(
+								cx + r * Math.cos(angle - Math.PI / 2),
+								cy + r * Math.sin(angle - Math.PI / 2),
+							);
+							this.circle.arc(cx, cy, r, angle - Math.PI / 2, angle + Math.PI / 2);
+							if (typeof this.circle.closePath === "function") {
+								this.circle.closePath();
+							}
+						} else {
+							// ── FOLDED (real node): filled half-disc ──────────────────────
+							// The half-disc has a real fill so PIXI containsPoint works
+							// natively. Clear any hitArea left by a preceding ghost draw so
+							// it does not shadow the native geometry test.
+							this.circle.hitArea = null;
+							this.circle.beginFill(0xffffff, 1);
+							this.circle.moveTo(cx, cy);
+							this.circle.arc(cx, cy, baseRadius, angle - Math.PI / 2, angle + Math.PI / 2);
+							if (typeof this.circle.closePath === "function") {
+								this.circle.closePath();
+							}
+							this.circle.endFill();
 						}
-						this.circle.endFill();
 
 						this.__f2gHalfDrawn = true;
+						this.__f2gGhostDrawn = false;
 					} catch (err) {
 						// Restore the normal circle if the custom drawing failed mid-way — a
 						// clear() without a successful redraw would leave the node invisible.
+						try {
+							originalRender.apply(this, args);
+						} catch (err2) {
+							// Silently ignore if originalRender also fails.
+						}
+					}
+				} else if (isGhost) {
+					// ── GHOST STATE ───────────────────────────────────────────────────────
+					// Redraw an outlined ring (hollow circle) every frame so that:
+					//   • any full-disc repaint by Obsidian (e.g. on hover) is overridden,
+					//   • the ghost visual is consistent across frames.
+					// White stroke + Obsidian tint ensures hover colour works correctly,
+					// matching the convention used by the half-disc drawing above.
+					try {
+						const baseRadius: number = this.__f2gBaseRadius ?? 100;
+						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
+						const cx: number = baseCenter.x;
+						const cy: number = baseCenter.y;
+
+						// Stroke thickness ≈ 18 % of the base radius gives a clearly visible
+						// ring without overly eating into the node's hit area.
+						const thickness = baseRadius * 0.18;
+
+						this.circle.clear();
+						// No fill: the ring is stroke-only. A beginFill with alpha=0 would
+						// make FillStyle.visible false in PIXI v6, causing containsPoint to
+						// return false and breaking all hover and click hit-testing.
+						this.circle.lineStyle(thickness, 0xffffff, 1);
+						this.circle.drawCircle(cx, cy, baseRadius - thickness / 2);
+						this.circle.endFill();
+
+						// Set an explicit hitArea so PIXI's InteractionManager still
+						// detects pointer events inside the ring (the disc centre as well
+						// as the stroke band). Without a fill, containsPoint would miss
+						// the interior. Coordinates are LOCAL to the DisplayObject, which
+						// is the same space used for drawing above.
+						this.circle.hitArea = {
+							contains: (hx: number, hy: number): boolean => {
+								const dx = hx - cx;
+								const dy = hy - cy;
+								return dx * dx + dy * dy <= baseRadius * baseRadius;
+							},
+						};
+
+						this.__f2gGhostDrawn = true;
+						this.__f2gHalfDrawn = false;
+					} catch (err) {
 						try {
 							originalRender.apply(this, args);
 						} catch (err2) {
@@ -381,6 +500,9 @@ export class NodePrototypePatcher {
 						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
 
 						this.circle.clear();
+						// Restore native hit-testing: a real fill makes containsPoint work
+						// naturally; clear any hitArea that may have been set by a ghost draw.
+						this.circle.hitArea = null;
 						this.circle.beginFill(0xffffff, 1);
 						if (typeof this.circle.drawCircle === "function") {
 							this.circle.drawCircle(baseCenter.x, baseCenter.y, baseRadius);
@@ -396,6 +518,36 @@ export class NodePrototypePatcher {
 							// Silently ignore if originalRender also fails.
 						}
 					}
+					this.__f2gHalfDrawn = false;
+					this.__f2gGhostDrawn = false;
+				} else if (this.__f2gGhostDrawn) {
+					// ── TRANSITION: ghost → real ── restore the full circle once. The
+					// ghost flag is cleared so subsequent frames do not re-enter this branch.
+					try {
+						const baseRadius: number = this.__f2gBaseRadius ?? 100;
+						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
+
+						this.circle.clear();
+						this.circle.lineStyle(0); // clear any active line style
+						// Remove the explicit hitArea set during ghost rendering so PIXI's
+						// native containsPoint (driven by the real fill below) takes over.
+						this.circle.hitArea = null;
+						this.circle.beginFill(0xffffff, 1);
+						if (typeof this.circle.drawCircle === "function") {
+							this.circle.drawCircle(baseCenter.x, baseCenter.y, baseRadius);
+						} else {
+							this.circle.moveTo(baseCenter.x, baseCenter.y);
+							this.circle.arc(baseCenter.x, baseCenter.y, baseRadius, 0, 2 * Math.PI);
+						}
+						this.circle.endFill();
+					} catch (err) {
+						try {
+							originalRender.apply(this, args);
+						} catch (err2) {
+							// Silently ignore if originalRender also fails.
+						}
+					}
+					this.__f2gGhostDrawn = false;
 					this.__f2gHalfDrawn = false;
 				}
 			};
@@ -482,6 +634,12 @@ export class NodePrototypePatcher {
 	 * Uses `indexOf` (first `#`) so that headings whose text itself contains
 	 * `#` characters are handled consistently — such IDs are a known degraded
 	 * case where the heading text will be truncated at the second `#`.
+	 *
+	 * **Sync contract:** this method splits on the **first** `#` character.
+	 * `GraphInteractions.createGhostHeading` uses the same first-`#` split to
+	 * reconstruct `filePart` and `headingText` from a ghost heading ID.  Both
+	 * must remain consistent on the `path#heading` format whenever the ID scheme
+	 * changes.
 	 *
 	 * @example
 	 * const label = extractHeadingFromNodeId("docs/guide#Getting Started");

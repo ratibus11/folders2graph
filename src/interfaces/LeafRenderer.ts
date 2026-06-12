@@ -72,6 +72,17 @@ export type LeafRenderer = {
 			/** PIXI tint colour applied by Obsidian's renderer each frame. Present on
 			 * PIXI DisplayObject; stored here for type-narrowing convenience only. */
 			tint?: number;
+			/**
+			 * PIXI hit area override. When set to an object with a `contains(x, y)`
+			 * method, PIXI's InteractionManager uses it instead of the drawn geometry
+			 * for pointer hit-testing. Set to `null` to restore the default geometry-
+			 * based test. Used by `NodePrototypePatcher` to keep ghost ring nodes
+			 * (which have no fill) responsive to hover and click events.
+			 */
+			hitArea?: { contains(x: number, y: number): boolean } | null;
+			/** PIXI Graphics line style setter. Used when drawing the ghost ring
+			 * outline and when clearing the line style on ghost → real transitions. */
+			lineStyle?: (width?: number, color?: number, alpha?: number) => void;
 			/** PIXI EventEmitter — registers a listener for the given event name. */
 			on?: (event: string, fn: (e: unknown) => void, ctx?: unknown) => void;
 			/** PIXI EventEmitter — removes a specific listener for the given event name. */
