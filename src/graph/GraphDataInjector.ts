@@ -130,20 +130,66 @@ export class GraphDataInjector {
 			this.hierarchy.reset();
 
 			if (this.settings.showFolderNodes) {
-				const folders = new Set("/");
+				const filterList = this.settings.folderFilterList;
+				const filterMode = this.settings.folderFilterMode;
+				const filtering = filterList.length > 0;
 
-				// Collect all ancestor folder paths for every existing node.
-				// e.g. "folder/subfolder/file.md" → ["/", "/folder", "/folder/subfolder"]
+				// ── Phase 1 ─────────────────────────────────────────────────────
+				// Iterate non-folder nodes to decide which folder nodes to create
+				// and which file→folder parent mappings to register.
+				//
+				// foldersToCreate: Set of `/`-prefixed folder IDs that will receive
+				//   a virtual node. The vault root "/" is always present.
+				// nodeParentMap: Maps each non-folder node ID to the `/`-prefixed
+				//   folder ID that should be its structural parent.
+
+				const foldersToCreate = new Set<string>();
+				foldersToCreate.add("/");
+				const nodeParentMap = new Map<string, string>();
+
 				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
-					const nodeSubFolders = this.getNodeParentFolders(nodeId);
+					if (nodeData.folderNode || nodeData.type === FOLDER_NODE_TAG) return;
 
-					if (!nodeData.folderNode && nodeData.type != FOLDER_NODE_TAG && nodeSubFolders != null) {
-						nodeSubFolders.forEach(folders.add, folders);
+					if (!filtering) {
+						// No filter: add all ancestor folders and map to direct parent.
+						this.getNodeParentFolders(nodeId).forEach((f) => foldersToCreate.add(f));
+						nodeParentMap.set(nodeId, this.getNodeParentFolder(nodeId));
+					} else if (filterMode === "exclude") {
+						// Exclude mode: skip the file entirely if its containing folder is
+						// covered by the exclusion list; otherwise add only the non-covered
+						// ancestor folders.
+						const containingFolder = this.getNodeContainingFolder(nodeId);
+						if (this.isPathCoveredByList(containingFolder, filterList)) return;
+						this.getNodeParentFolders(nodeId)
+							.filter((f) => f === "/" || !this.isPathCoveredByList(f.slice(1), filterList))
+							.forEach((f) => foldersToCreate.add(f));
+						nodeParentMap.set(nodeId, this.getNodeParentFolder(nodeId));
+					} else {
+						// Include mode: find the shallowest covering entry for this file.
+						// If none, the file gets no folder attachment.
+						const anchor = this.findShallowestCoveringEntry(
+							this.getNodeContainingFolder(nodeId),
+							filterList,
+						);
+						if (anchor === null) return;
+						const anchorFolderId = `/${anchor}`;
+						foldersToCreate.add(anchorFolderId);
+						// Add every ancestor of the file that is at or below the anchor.
+						this.getNodeParentFolders(nodeId).forEach((f) => {
+							if (f === "/") return; // root is always present; skip here
+							const rel = f.slice(1); // strip leading "/"
+							if (rel === anchor || rel.startsWith(anchor + "/")) {
+								foldersToCreate.add(f);
+							}
+						});
+						nodeParentMap.set(nodeId, this.getNodeParentFolder(nodeId));
 					}
 				});
 
-				// Add a virtual node for each folder path.
-				folders.forEach((folder) => {
+				// ── Phase 2 ─────────────────────────────────────────────────────
+				// Create virtual folder nodes for every path collected in Phase 1.
+
+				foldersToCreate.forEach((folder) => {
 					data.nodes[folder] = {
 						type: FOLDER_NODE_TAG,
 						links: {},
@@ -152,14 +198,28 @@ export class GraphDataInjector {
 					this.folderNodeIds.add(folder);
 				});
 
-				// Wire each node to its direct parent folder and register the
-				// structural parent→child relationship.
-				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
-					if (nodeData.type != FOLDER_NODE_TAG || nodeData.folderNode) {
-						const directParent = this.getNodeParentFolder(nodeId);
-						data.nodes[directParent].links[nodeId] = true;
-						this.hierarchy.addChild(directParent, nodeId);
-					}
+				// ── Phase 3 ─────────────────────────────────────────────────────
+				// Wire folder→folder edges. Rule: for each folder ≠ "/", if its
+				// natural parent folder is in foldersToCreate, cable to that parent;
+				// otherwise cable to "/". This uniform rule handles anchors and
+				// nested include entries automatically.
+
+				foldersToCreate.forEach((folderId) => {
+					if (folderId === "/") return;
+					const naturalParent = this.getNodeParentFolder(folderId);
+					const parentId = foldersToCreate.has(naturalParent) ? naturalParent : "/";
+					data.nodes[parentId].links[folderId] = true;
+					this.hierarchy.addChild(parentId, folderId);
+				});
+
+				// ── Phase 4 ─────────────────────────────────────────────────────
+				// Wire file→folder (and heading→folder) edges from Phase 1 mappings.
+				// Only cable when the mapped parent folder was actually created.
+
+				nodeParentMap.forEach((parentFolderId, nodeId) => {
+					if (!foldersToCreate.has(parentFolderId)) return;
+					data.nodes[parentFolderId].links[nodeId] = true;
+					this.hierarchy.addChild(parentFolderId, nodeId);
 				});
 
 				if (this.settings.hideRootNode && data.nodes["/"]) {
@@ -388,6 +448,90 @@ export class GraphDataInjector {
 		if (data.nodes[noExt]) return noExt;
 		if (data.nodes[dest.basename]) return dest.basename;
 		return dest.path;
+	}
+
+	/**
+	 * Returns the vault-relative folder path that directly contains `nodeId`,
+	 * without any leading slash. For a file at the vault root the result is an
+	 * empty string.
+	 *
+	 * @param nodeId Graph node ID of the file (e.g. `"work/projects/note.md"`).
+	 * @returns Vault-relative parent folder path (e.g. `"work/projects"`), or
+	 *   `""` for files at the root level.
+	 *
+	 * @example
+	 * getNodeContainingFolder("work/projects/note.md"); // "work/projects"
+	 * getNodeContainingFolder("readme.md");             // ""
+	 */
+	private getNodeContainingFolder(nodeId: string): string {
+		const parts = nodeId.split("/");
+		return parts.slice(0, parts.length - 1).join("/");
+	}
+
+	/**
+	 * Returns `true` when `vaultPath` is exactly matched by an entry in `list`
+	 * or is a descendant of one (matched by segment boundary, not substring).
+	 *
+	 * @param vaultPath Vault-relative path to test, without leading slash
+	 *   (e.g. `"work/projects"`).
+	 * @param list      Normalised filter list (no leading/trailing slashes).
+	 * @returns `true` when at least one entry in `list` covers `vaultPath`.
+	 *
+	 * @remarks
+	 * Matching is always done by full path segment: the entry `"tra"` does NOT
+	 * match `"travail"` because the segment boundary check requires either an
+	 * exact match or the path continuing with `"/"` after the entry.
+	 *
+	 * Entries that point to non-existent vault folders simply never match — no
+	 * vault lookup is performed.
+	 *
+	 * @example
+	 * isPathCoveredByList("work/projects",       ["work"]);           // true
+	 * isPathCoveredByList("work/projects/sub",   ["work/projects"]);  // true
+	 * isPathCoveredByList("work",                ["work/projects"]);  // false
+	 * isPathCoveredByList("travail",             ["tra"]);            // false
+	 * isPathCoveredByList("work",                ["work"]);           // true
+	 */
+	private isPathCoveredByList(vaultPath: string, list: string[]): boolean {
+		return list.some(
+			(entry) => vaultPath === entry || vaultPath.startsWith(entry + "/"),
+		);
+	}
+
+	/**
+	 * Returns the entry in `list` that covers `vaultPath` and has the fewest
+	 * path segments (i.e. is the shallowest ancestor), or `null` when no entry
+	 * covers it.
+	 *
+	 * @param vaultPath Vault-relative path to test, without leading slash.
+	 * @param list      Normalised filter list (no leading/trailing slashes).
+	 * @returns The shallowest covering entry string, or `null`.
+	 *
+	 * @remarks
+	 * When multiple entries cover `vaultPath` (e.g. `["work", "work/projects"]`
+	 * both cover `"work/projects/note"`), the one with fewer segments wins —
+	 * `"work"` in this case — so the file is anchored as high as possible.
+	 *
+	 * @example
+	 * findShallowestCoveringEntry("work/projects/note", ["work", "work/projects"]);
+	 * // "work"
+	 *
+	 * findShallowestCoveringEntry("personal/diary", ["work"]);
+	 * // null
+	 */
+	private findShallowestCoveringEntry(vaultPath: string, list: string[]): string | null {
+		let best: string | null = null;
+		let bestDepth = Infinity;
+		for (const entry of list) {
+			if (vaultPath === entry || vaultPath.startsWith(entry + "/")) {
+				const depth = entry.split("/").length;
+				if (depth < bestDepth) {
+					bestDepth = depth;
+					best = entry;
+				}
+			}
+		}
+		return best;
 	}
 
 	/**
