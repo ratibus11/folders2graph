@@ -333,9 +333,9 @@ export class GraphInteractions {
 	 *
 	 * @remarks
 	 * The heading is inserted as a level-2 Markdown heading (`## headingText`)
-	 * separated from the existing content by exactly one blank line: trailing
-	 * whitespace is stripped before appending, so repeated insertions never
-	 * accumulate empty lines, and an empty file receives the heading alone.
+	 * on its own line: when the document already ends with a newline the
+	 * heading is appended directly, otherwise a single newline is added first —
+	 * no blank line is ever introduced between the content and the heading.
 	 * Level 2 is chosen as a reasonable default that fits under a typical
 	 * top-level (`#`) overview section without requiring the user to
 	 * restructure the document.
@@ -385,15 +385,13 @@ export class GraphInteractions {
 		let writtenFile: Nullable<TFile> = targetFile;
 
 		if (targetFile) {
-			// File exists — append the heading to the existing content, with
-			// exactly one blank line of separation: trailing whitespace/newlines
-			// are stripped first so repeated insertions never accumulate empty
-			// lines, and an empty file receives the heading alone.
+			// File exists — append the heading on its own line: when the document
+			// already ends with a newline (last line empty) the heading is written
+			// directly; otherwise a single newline is added first. No blank line
+			// is ever inserted between the existing content and the heading.
 			await this.app.vault.process(targetFile, (content: string) => {
-				const trimmed = content.replace(/\s+$/, "");
-				return trimmed === ""
-					? "## " + headingText + "\n"
-					: trimmed + "\n\n## " + headingText + "\n";
+				const separator = content === "" || content.endsWith("\n") ? "" : "\n";
+				return content + separator + "## " + headingText + "\n";
 			});
 		} else {
 			// File does not exist — derive a vault path from filePart and create

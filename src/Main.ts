@@ -252,6 +252,11 @@ export default class Folders2GraphPlugin extends Plugin {
 		this.registerEvent(this.app.vault.on("create", scheduleVaultRefresh));
 		this.registerEvent(this.app.vault.on("delete", scheduleVaultRefresh));
 		this.registerEvent(this.app.vault.on("rename", scheduleVaultRefresh));
+		// Content edits (e.g. removing a heading from a note) are invisible to
+		// the vault structural events above; `metadataCache.on("changed")` fires
+		// once the modified file has been re-indexed, which is exactly when the
+		// ghost/real status of heading nodes can be recomputed reliably.
+		this.registerEvent(this.app.metadataCache.on("changed", scheduleVaultRefresh));
 
 		// Iterates through all tabs which are of type "graph".
 		this.refreshGraphLeaves();
