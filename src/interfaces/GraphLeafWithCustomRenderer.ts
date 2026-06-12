@@ -38,7 +38,32 @@ type CustomLeaf = {
 		dataEngine?: {
 			getOptions?: () => unknown;
 			setOptions?: (options: unknown) => void;
+			/** Reads `filterOptions.search.getValue()`, reconstructs the filter
+			 * query, and triggers a graph refresh. Must be called after
+			 * `filterOptions.search.setValue()` to push the new value into the
+			 * engine. Internal Obsidian API — may be absent. */
+			updateSearch?: () => void;
+			/** Alternative async update path present in some Obsidian builds.
+			 * `run()` immediately executes the deferred update. Internal API —
+			 * may be absent. */
+			requestUpdateSearch?: { run?: () => void };
+			/** Exposes the graph filter controls so the plugin can pre-fill the
+			 * search field programmatically. Internal Obsidian API — may be absent. */
+			filterOptions?: {
+				/** The search component inside the filter panel. Exposes the
+				 * standard Obsidian `TextComponent` `getValue`/`setValue` interface.
+				 * Internal API — may be absent. */
+				search?: {
+					getValue?: () => string;
+					setValue?: (value: string) => unknown;
+				};
+			};
 		};
+		/** Opens the graph controls panel and focuses the search field. Calls
+		 * `dataEngine.controlsEl.removeClass("is-close")`,
+		 * `filterOptions.setCollapsed(false, true)`, and
+		 * `search.autoSelect()` internally. Internal Obsidian API — may be absent. */
+		showSearch?: () => void;
 	};
 };
 
