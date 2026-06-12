@@ -349,6 +349,13 @@ export class GraphDataInjector {
 				});
 				sourceNodeIds.forEach((nodeId) => this.injectHeadingNodesForFile(data, nodeId));
 
+				// After ALL real heading nodes are in place, rewire native file→file
+				// edges that carry a #fragment pointing to an existing heading: each
+				// such edge becomes a file→headingNode edge (the file→file edge is
+				// removed unless there is also a bare, fragment-free link from the same
+				// source to the same target file).
+				sourceNodeIds.forEach((nodeId) => this.rewireFragmentLinksForFile(data, nodeId));
+
 				// After real headings are in place, scan every source file for links
 				// that reference a heading that is absent from the target file — those
 				// become ghost heading nodes attached to the target file node.
@@ -425,6 +432,18 @@ export class GraphDataInjector {
 	 * Non-structural links (refs/embeds from a heading to another file) are
 	 * added as graph links but NOT registered in `StructuralHierarchy`.
 	 *
+	 * When a ref under a heading has a `#fragment` that matches an existing
+	 * heading in the target file (case-insensitive), the edge points to the
+	 * target heading node (`targetFileNode#realHeadingText`) instead of the
+	 * target file node.  This is safe here because heading injection runs for
+	 * all source files in one pass before any link wiring, so the target heading
+	 * nodes already exist in `data.nodes` when this loop runs for any given
+	 * source file.  (All calls to `injectHeadingNodesForFile` happen in a single
+	 * `forEach` before link wiring begins for any file.)
+	 *
+	 * Block-reference fragments (beginning with `^`) are excluded and always
+	 * resolve to the target file node.
+	 *
 	 * @example
 	 * // Source file "docs/guide" has two headings:
 	 * //   # Overview        (level 1)
@@ -481,6 +500,9 @@ export class GraphDataInjector {
 
 		// Attach each referenced note to the heading that contains the reference.
 		// These are NOT structural relationships.
+		// When the ref has a #fragment that resolves to an existing heading in the
+		// target file, the link is directed to the target heading node instead of
+		// the target file node.
 		refs.forEach((ref) => {
 			const owning = this.findOwningHeading(headings, ref.position.start.line);
 			if (!owning) return;
@@ -491,12 +513,154 @@ export class GraphDataInjector {
 			);
 			if (!dest) return;
 
-			const linkedNodeId = this.resolveGraphNodeId(data, dest);
-			if (!linkedNodeId) return;
+			const targetFileNodeId = this.resolveGraphNodeId(data, dest);
+			if (!targetFileNodeId) return;
+
+			// Determine whether the ref targets a specific heading in the dest file.
+			// Block references (^) are excluded — they do not correspond to headings.
+			const hashIdx = ref.link.indexOf("#");
+			let linkedNodeId = targetFileNodeId;
+			if (hashIdx >= 0) {
+				const fragment = ref.link.slice(hashIdx + 1);
+				if (!fragment.startsWith("^")) {
+					const destCache = this.app.metadataCache.getFileCache(dest);
+					const fragmentLower = fragment.toLowerCase();
+					const matchedHeading = destCache?.headings?.find(
+						(h) => h.heading.toLowerCase() === fragmentLower,
+					);
+					if (matchedHeading) {
+						const headingNodeId = this.buildHeadingNodeId(
+							targetFileNodeId,
+							matchedHeading.heading,
+						);
+						// Only redirect if the heading node actually exists in data.nodes
+						// (all injectHeadingNodesForFile calls complete before link wiring,
+						// so the target heading node is present when the source file has
+						// headings; but if the target file has no headings in its cache the
+						// node is absent — fall back to the file node).
+						if (data.nodes[headingNodeId]) {
+							linkedNodeId = headingNodeId;
+						}
+					}
+				}
+			}
 
 			const headingId = this.buildHeadingNodeId(nodeId, owning.heading);
 			data.nodes[headingId].links[linkedNodeId] = true;
 		});
+	}
+
+	/**
+	 * Rewires native file→file edges whose source link carries a `#fragment`
+	 * that resolves to an existing heading node in the target file.
+	 *
+	 * @param data   Mutable graph data object.
+	 * @param nodeId Graph node ID of the source Markdown file.
+	 *
+	 * @remarks
+	 * Must be called AFTER `injectHeadingNodesForFile` has run for ALL source
+	 * files so that every target heading node is already present in `data.nodes`.
+	 *
+	 * Obsidian natively records a `sourceFileNode → targetFileNode` edge for every
+	 * wikilink regardless of fragments.  When `showHeadingNodes` is active and the
+	 * referenced heading exists, the intended semantic is
+	 * `sourceFileNode → targetHeadingNode`.  This method:
+	 *
+	 * 1. Scans all refs in `nodeId`'s source file that have no owning heading
+	 *    (i.e. they appear before the first heading — these are the native
+	 *    file-level links managed by Obsidian).
+	 * 2. For each ref with a `#fragment` (non-block) that resolves to an existing
+	 *    heading node in the target:
+	 *    a. Adds `sourceFileNode → targetHeadingNode`.
+	 *    b. Removes `sourceFileNode → targetFileNode` ONLY when no other ref from
+	 *       this source to the same target file exists without a fragment (a bare
+	 *       link to the file and a section link may legitimately coexist).
+	 *
+	 * Block-reference fragments (`^`) are excluded everywhere.
+	 */
+	private rewireFragmentLinksForFile(data: RendererData, nodeId: string): void {
+		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
+		if (!file || file.extension !== "md") return;
+
+		const cache = this.app.metadataCache.getFileCache(file);
+		if (!cache) return;
+
+		const headings = cache.headings ?? [];
+		const refs = [...(cache.links ?? []), ...(cache.embeds ?? [])];
+
+		// Collect per-target information from all refs WITHOUT an owning heading
+		// (i.e. file-level refs handled natively by Obsidian as file→file edges).
+		// For each target file node ID we track:
+		//   - hasBareLink: true if at least one ref has no fragment (or a block ref ^)
+		//   - headingNodes: set of target heading node IDs from fragment refs
+		type TargetInfo = { hasBareLink: boolean; headingNodes: Set<string> };
+		const targets = new Map<string, TargetInfo>();
+
+		for (const ref of refs) {
+			const owning = this.findOwningHeading(headings, ref.position.start.line);
+			if (owning) continue; // handled by injectHeadingNodesForFile
+
+			const dest = this.app.metadataCache.getFirstLinkpathDest(
+				getLinkpath(ref.link),
+				file.path,
+			);
+			if (!dest) continue;
+
+			const targetFileNodeId = this.resolveGraphNodeId(data, dest);
+			if (!targetFileNodeId || !data.nodes[targetFileNodeId]) continue;
+
+			if (!targets.has(targetFileNodeId)) {
+				targets.set(targetFileNodeId, { hasBareLink: false, headingNodes: new Set() });
+			}
+			const info = targets.get(targetFileNodeId)!;
+
+			const hashIdx = ref.link.indexOf("#");
+			if (hashIdx < 0) {
+				// No fragment — this is a bare link to the file.
+				info.hasBareLink = true;
+				continue;
+			}
+
+			const fragment = ref.link.slice(hashIdx + 1);
+			if (fragment.startsWith("^")) {
+				// Block reference — treat as a bare file link for edge-removal purposes.
+				info.hasBareLink = true;
+				continue;
+			}
+
+			// Fragment ref — check whether the heading node exists in data.nodes.
+			const destCache = this.app.metadataCache.getFileCache(dest);
+			const fragmentLower = fragment.toLowerCase();
+			const matchedHeading = destCache?.headings?.find(
+				(h) => h.heading.toLowerCase() === fragmentLower,
+			);
+			if (!matchedHeading) continue;
+
+			const headingNodeId = this.buildHeadingNodeId(targetFileNodeId, matchedHeading.heading);
+			if (!data.nodes[headingNodeId]) continue;
+
+			info.headingNodes.add(headingNodeId);
+		}
+
+		// Apply rewiring: for each target with heading refs, add the heading edges
+		// and conditionally remove the file→file edge.
+		const sourceNode = data.nodes[nodeId];
+		if (!sourceNode) return;
+
+		for (const [targetFileNodeId, info] of targets) {
+			if (info.headingNodes.size === 0) continue;
+
+			// Add source → heading edges.
+			for (const headingNodeId of info.headingNodes) {
+				sourceNode.links[headingNodeId] = true;
+			}
+
+			// Remove the native source → file edge only when there is no bare link
+			// from this source to this target file.
+			if (!info.hasBareLink) {
+				delete sourceNode.links[targetFileNodeId];
+			}
+		}
 	}
 
 	/**
