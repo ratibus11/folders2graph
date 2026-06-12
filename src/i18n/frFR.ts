@@ -28,6 +28,10 @@ export const frFR: I18n = {
 			name: "Couleur des nœuds de titre",
 			desc: "Couleur des nœuds de titre dans la vue graphique. (par défaut à #f5a55c)",
 		},
+		weightNodesBySubtree: {
+			name: "Pondérer les nœuds par leur sous-arbre complet",
+			desc: "Lorsqu'activé, la taille d'un nœud reflète tous ses descendants structurels visibles — dossiers, fichiers et titres à tous les niveaux — et non seulement ses enfants directs. Les nœuds repliés redeviennent petits car leurs descendants masqués ne comptent plus. (désactivé par défaut)",
+		},
 	},
 	commands: {
 		toggleFolderNodes: {
@@ -38,6 +42,9 @@ export const frFR: I18n = {
 		},
 		unfoldAllNodes: {
 			name: "Déplier tous les nœuds du graphe",
+		},
+		toggleWeightNodesBySubtree: {
+			name: "Activer ou désactiver la pondération par sous-arbre",
 		},
 	},
 };

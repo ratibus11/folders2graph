@@ -124,6 +124,66 @@ export class NodePrototypePatcher {
 			};
 		}
 
+		// Patch getSize so that, when weightNodesBySubtree is enabled, the
+		// node's effective weight is temporarily inflated by the count of
+		// indirect visible descendants before the native size calculation runs.
+		// This reuses the native size curve without introducing an arbitrary
+		// pixel offset. Direct children are already counted by Obsidian via the
+		// number of displayed edges (this.weight), so only indirect descendants
+		// are added to avoid double-counting.
+		const originalGetSize = proto.getSize;
+		if (typeof originalGetSize === "function") {
+			proto.__f2gOriginalGetSize = originalGetSize;
+
+			/**
+			 * @remarks
+			 * Obsidian derives node size from `this.weight`, which equals the
+			 * number of edges (links) currently displayed for the node. Direct
+			 * structural children already contribute to `weight` as visible
+			 * edges, so we only need to add the *indirect* visible descendant
+			 * count to capture grandchildren and deeper. We temporarily inflate
+			 * `this.weight`, call the original function, then restore — this way
+			 * the native size curve is reused without modification.
+			 *
+			 * If `this.weight` is not a number (Obsidian build divergence), we
+			 * fall back to the original unmodified — adding an integer directly
+			 * to a size-in-pixels value on an unknown scale would produce
+			 * aberrantly large bubbles.
+			 *
+			 * @example
+			 * // Hierarchy: /work → work/project → note.md (all visible, enabled)
+			 * // this.id = "/work", this.weight = 1 (one edge: /work → work/project)
+			 * // indirect = 1 (note.md is an indirect descendant of /work)
+			 * // → this.weight is temporarily set to 2, original runs, weight restored.
+			 */
+			proto.getSize = function () {
+				if (!patcher.settings.weightNodesBySubtree) {
+					return originalGetSize.call(this);
+				}
+				const indirect = patcher.hierarchy.getIndirectVisibleDescendantCount(this.id);
+				if (indirect <= 0) {
+					return originalGetSize.call(this);
+				}
+				// The native weight is the number of displayed edges. Inflate it
+				// temporarily by the indirect visible descendant count, call the
+				// original size function to preserve its curve, then restore. The
+				// restore is in a finally block: leaving the weight inflated after
+				// an exception would permanently corrupt the node's native size.
+				const savedWeight = this.weight;
+				if (typeof savedWeight === "number") {
+					this.weight = savedWeight + indirect;
+					try {
+						return originalGetSize.call(this);
+					} finally {
+						this.weight = savedWeight;
+					}
+				}
+				// Fallback: weight is not a number — return the original unchanged
+				// to avoid adding a raw count to an unknown pixel scale.
+				return originalGetSize.call(this);
+			};
+		}
+
 		// Patch the node render method (its name varies across Obsidian builds)
 		// so that, once per node instance, the PIXI listeners of the node circle
 		// are wrapped to intercept Shift+right-click. Obsidian registers its own
@@ -367,6 +427,11 @@ export class NodePrototypePatcher {
 		if (proto.__f2gOriginalGetDisplayText) {
 			proto.getDisplayText = proto.__f2gOriginalGetDisplayText;
 			delete proto.__f2gOriginalGetDisplayText;
+		}
+
+		if (proto.__f2gOriginalGetSize) {
+			proto.getSize = proto.__f2gOriginalGetSize;
+			delete proto.__f2gOriginalGetSize;
 		}
 
 		// Restore the patched render method, whichever name was found at patch time.

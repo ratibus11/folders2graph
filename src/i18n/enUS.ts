@@ -29,6 +29,10 @@ export const enUS: I18n = {
 			name: "Heading node color",
 			desc: "Color used to display heading nodes in the graph view. (defaulted to #f5a55c)",
 		},
+		weightNodesBySubtree: {
+			name: "Weight nodes by full subtree",
+			desc: "When enabled, the size of a node reflects all of its visible structural descendants at every depth (folders, files, headings), not just its direct children. Folded nodes shrink because their hidden descendants no longer count. (disabled by default)",
+		},
 	},
 	commands: {
 		toggleFolderNodes: {
@@ -39,6 +43,9 @@ export const enUS: I18n = {
 		},
 		unfoldAllNodes: {
 			name: "Unfold all graph nodes",
+		},
+		toggleWeightNodesBySubtree: {
+			name: "Toggle subtree weight for graph nodes",
 		},
 	},
 };

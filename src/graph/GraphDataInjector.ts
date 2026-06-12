@@ -189,6 +189,8 @@ export class GraphDataInjector {
 
 			// Pre-compute the collapsed set for O(1) frame-time lookups.
 			this.hierarchy.computeCollapsedSet();
+			// Pre-compute indirect visible descendant counts for the subtree weight feature.
+			this.hierarchy.computeVisibleDescendantCounts();
 
 			// Filter hidden nodes from the data before passing to the renderer.
 			for (const id of Object.keys(this.settings.hiddenNodes)) {

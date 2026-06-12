@@ -28,6 +28,10 @@ export type I18n = {
 			name: string;
 			desc: string;
 		};
+		weightNodesBySubtree: {
+			name: string;
+			desc: string;
+		};
 	};
 	/** Strings used for registered Obsidian commands. */
 	commands: {
@@ -38,6 +42,9 @@ export type I18n = {
 			name: string;
 		};
 		unfoldAllNodes: {
+			name: string;
+		};
+		toggleWeightNodesBySubtree: {
 			name: string;
 		};
 	};
