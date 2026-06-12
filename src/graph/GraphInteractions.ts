@@ -281,8 +281,10 @@ export class GraphInteractions {
 	}
 
 	/**
-	 * Creates the vault folder backing a ghost folder node, then triggers a full
-	 * graph refresh so the node transitions from ghost (outlined) to real (filled).
+	 * Creates the vault folder backing a ghost folder node, triggers a full
+	 * graph refresh so the node transitions from ghost (outlined) to real
+	 * (filled), then highlights the new folder in the file explorer — the same
+	 * action a click on a regular folder node performs.
 	 *
 	 * @param folderNodeId A `/`-prefixed ghost folder node ID (e.g. `"/a/b"`).
 	 * @returns A `Promise` that resolves after the folder is created and the
@@ -311,12 +313,17 @@ export class GraphInteractions {
 			// Folder may have been created concurrently — ignore and refresh anyway.
 		}
 		this.refreshGraphLeaves();
+		// Mirror the classic folder-node click: now that the folder exists,
+		// highlight it in the file explorer.
+		this.revealFolderInExplorer(folderNodeId);
 	}
 
 	/**
 	 * Appends a new heading to the end of the target file referenced by a ghost
-	 * heading node, then triggers a full graph refresh.  When the target file does
-	 * not yet exist it is created (along with any missing parent directories) with
+	 * heading node, triggers a full graph refresh, then opens the note at the
+	 * freshly created section via the native link handler — the same action a
+	 * click on a regular heading node performs.  When the target file does not
+	 * yet exist it is created (along with any missing parent directories) with
 	 * the heading as its only content.
 	 *
 	 * @param ghostHeadingId A ghost heading node ID in the form
@@ -414,6 +421,11 @@ export class GraphInteractions {
 		}
 
 		this.refreshGraphLeaves();
+
+		// Mirror the classic heading-node click: now that the heading exists,
+		// let the native handler open the note at that section. The ghost ID
+		// already follows Obsidian's `path#heading` wikilink format.
+		await this.originalOpenLinkText?.(ghostHeadingId, "", false);
 	}
 
 	/**
