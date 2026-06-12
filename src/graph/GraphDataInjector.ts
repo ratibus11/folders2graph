@@ -131,6 +131,13 @@ export class GraphDataInjector {
 			// Reset structural maps before (re)building them during this setData.
 			this.hierarchy.reset();
 
+			// Collects file node IDs that fall outside the filter scope so they can
+			// be hidden from the graph when `settings.folderFilterHideFiles` is
+			// enabled. Only populated when a folder filter is active; declared here
+			// because the heading injection block below also sweeps dangling links
+			// toward these IDs.
+			const filteredOutFileIds = new Set<string>();
+
 			if (this.settings.showFolderNodes) {
 				const filterList = this.settings.folderFilterList;
 				const filterMode = this.settings.folderFilterMode;
@@ -148,10 +155,6 @@ export class GraphDataInjector {
 				const foldersToCreate = new Set<string>();
 				foldersToCreate.add("/");
 				const nodeParentMap = new Map<string, string>();
-				// Collects file node IDs that fall outside the filter scope so they
-				// can be hidden from the graph when `settings.folderFilterHideFiles`
-				// is enabled. Only populated when `filtering` is true.
-				const filteredOutFileIds = new Set<string>();
 
 				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
 					if (nodeData.folderNode || nodeData.type === FOLDER_NODE_TAG) return;
@@ -266,6 +269,21 @@ export class GraphDataInjector {
 					return nodeData.type !== FOLDER_NODE_TAG && nodeData.type !== HEADING_NODE_TAG;
 				});
 				sourceNodeIds.forEach((nodeId) => this.injectHeadingNodesForFile(data, nodeId));
+
+				// Heading injection attaches referenced notes via resolveGraphNodeId,
+				// whose fallback returns the destination path even when that node is
+				// absent from the data — a heading of a visible file referencing a
+				// file removed by the folder filter would therefore create a dangling
+				// edge (and a potential ghost node). Sweep those references out.
+				if (this.settings.folderFilterHideFiles && filteredOutFileIds.size > 0) {
+					for (const nodeData of Object.values(data.nodes)) {
+						for (const targetId of Object.keys(nodeData.links)) {
+							if (filteredOutFileIds.has(targetId)) {
+								delete nodeData.links[targetId];
+							}
+						}
+					}
+				}
 			}
 
 			// Record the complete graph state (post-injection, pre-filter) for
