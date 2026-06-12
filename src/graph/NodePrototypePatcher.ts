@@ -33,6 +33,7 @@ export class NodePrototypePatcher {
 	private handleRecursiveUnfold: (nodeId: string) => void;
 	private setSuppressNextContextMenu: (value: boolean) => void;
 	private getSuppressNextContextMenu: () => boolean;
+	private isGhostNode: (nodeId: string) => boolean;
 
 	/**
 	 * @param settings                    Plugin settings; read for node colours.
@@ -46,6 +47,11 @@ export class NodePrototypePatcher {
 	 *   consumed by the DOM `contextmenu` listener.
 	 * @param setSuppressNextContextMenu  Sets the suppress-context-menu flag.
 	 *   Called by the PIXI rightdown wrapper when swallowing a gesture.
+	 * @param isGhostNode                 Returns `true` when a node ID belongs
+	 *   to a ghost folder or ghost heading (content that exists only as a
+	 *   virtual placeholder pending vault creation).  Also applies to Obsidian's
+	 *   native `"unresolved"` node type, which is tested directly on the instance
+	 *   without going through this callback.
 	 */
 	constructor(
 		settings: Settings,
@@ -53,12 +59,14 @@ export class NodePrototypePatcher {
 		handleRecursiveUnfold: (nodeId: string) => void,
 		getSuppressNextContextMenu: () => boolean,
 		setSuppressNextContextMenu: (value: boolean) => void,
+		isGhostNode: (nodeId: string) => boolean,
 	) {
 		this.settings = settings;
 		this.hierarchy = hierarchy;
 		this.handleRecursiveUnfold = handleRecursiveUnfold;
 		this.getSuppressNextContextMenu = getSuppressNextContextMenu;
 		this.setSuppressNextContextMenu = setSuppressNextContextMenu;
+		this.isGhostNode = isGhostNode;
 	}
 
 	/**
@@ -288,6 +296,13 @@ export class NodePrototypePatcher {
 				}
 
 				const isCollapsed = patcher.hierarchy.isCollapsed(this.id);
+				// A node is "ghost" when its ID is in the ghost-folder / ghost-heading
+				// sets, or when Obsidian itself marks it as an unresolved wikilink
+				// target (type === "unresolved"). The collapsed state takes priority:
+				// a ghost that is also folded renders as a half-disc, not a ring.
+				const isGhost =
+					this.type === "unresolved" ||
+					patcher.isGhostNode(this.id);
 
 				if (isCollapsed) {
 					// ── FOLDED STATE ──────────────────────────────────────────────────────
@@ -296,6 +311,12 @@ export class NodePrototypePatcher {
 					//   • any full-circle repaint by Obsidian (e.g. on hover) is overridden.
 					// This is bounded to the number of visible collapsed nodes, so it is
 					// acceptable in practice.
+					//
+					// @remarks
+					// A ghost node can be folded (e.g. user Shift+clicked it). Pliage de
+					// fantôme ne survit pas au redémarrage: the vault-based hiddenNodes purge
+					// will remove its descendants on the next load because they are not real
+					// vault items. This is accepted behaviour.
 					try {
 						// Measure the native base radius AND centre from the local geometry on
 						// first encounter (before we clear it). Both are cached per-instance.
@@ -372,6 +393,52 @@ export class NodePrototypePatcher {
 							// Silently ignore if originalRender also fails.
 						}
 					}
+				} else if (isGhost) {
+					// ── GHOST STATE ───────────────────────────────────────────────────────
+					// Redraw an outlined ring (hollow circle) every frame so that:
+					//   • any full-disc repaint by Obsidian (e.g. on hover) is overridden,
+					//   • the ghost visual is consistent across frames.
+					// White stroke + Obsidian tint ensures hover colour works correctly,
+					// matching the convention used by the half-disc drawing above.
+					try {
+						if (!this.__f2gBaseRadius) {
+							let r = 0;
+							let cx = 0;
+							let cy = 0;
+							if (typeof this.circle.getLocalBounds === "function") {
+								const b = this.circle.getLocalBounds();
+								r = Math.max(b.width, b.height) / 2;
+								cx = b.x + b.width / 2;
+								cy = b.y + b.height / 2;
+							}
+							this.__f2gBaseRadius = r > 0 && isFinite(r) ? r : 100;
+							this.__f2gBaseCenter = { x: cx, y: cy };
+						}
+						const baseRadius: number = this.__f2gBaseRadius;
+						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
+						const cx: number = baseCenter.x;
+						const cy: number = baseCenter.y;
+
+						// Stroke thickness ≈ 18 % of the base radius gives a clearly visible
+						// ring without overly eating into the node's hit area.
+						const thickness = baseRadius * 0.18;
+
+						this.circle.clear();
+						// Transparent fill keeps the PIXI hit area intact so the node
+						// remains clickable in the centre of the ring.
+						this.circle.beginFill(0xffffff, 0);
+						this.circle.lineStyle(thickness, 0xffffff, 1);
+						this.circle.drawCircle(cx, cy, baseRadius - thickness / 2);
+						this.circle.endFill();
+
+						this.__f2gGhostDrawn = true;
+					} catch (err) {
+						try {
+							originalRender.apply(this, args);
+						} catch (err2) {
+							// Silently ignore if originalRender also fails.
+						}
+					}
 				} else if (this.__f2gHalfDrawn) {
 					// ── TRANSITION: just unfolded ── restore the full circle once. Obsidian
 					// does not redraw the circle geometry on its own when a node changes
@@ -397,6 +464,31 @@ export class NodePrototypePatcher {
 						}
 					}
 					this.__f2gHalfDrawn = false;
+				} else if (this.__f2gGhostDrawn) {
+					// ── TRANSITION: ghost → real ── restore the full circle once. The
+					// ghost flag is cleared so subsequent frames do not re-enter this branch.
+					try {
+						const baseRadius: number = this.__f2gBaseRadius ?? 100;
+						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
+
+						this.circle.clear();
+						this.circle.lineStyle(0); // clear any active line style
+						this.circle.beginFill(0xffffff, 1);
+						if (typeof this.circle.drawCircle === "function") {
+							this.circle.drawCircle(baseCenter.x, baseCenter.y, baseRadius);
+						} else {
+							this.circle.moveTo(baseCenter.x, baseCenter.y);
+							this.circle.arc(baseCenter.x, baseCenter.y, baseRadius, 0, 2 * Math.PI);
+						}
+						this.circle.endFill();
+					} catch (err) {
+						try {
+							originalRender.apply(this, args);
+						} catch (err2) {
+							// Silently ignore if originalRender also fails.
+						}
+					}
+					this.__f2gGhostDrawn = false;
 				}
 			};
 		}

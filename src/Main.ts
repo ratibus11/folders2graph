@@ -120,6 +120,9 @@ export default class Folders2GraphPlugin extends Plugin {
 			(nodeId) => this.__foldingManager.handleRecursiveUnfold(nodeId),
 			() => this.__interactions.getSuppressNextContextMenu(),
 			(value) => this.__interactions.setSuppressNextContextMenu(value),
+			(nodeId) =>
+				this.__injector.getGhostFolderIds().has(nodeId) ||
+				this.__injector.getGhostHeadingIds().has(nodeId),
 		);
 
 		// Register commands so the user can bind hotkeys to toggle each node type. `Mod`
