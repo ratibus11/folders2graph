@@ -11,6 +11,12 @@ import { I18n } from "types/I18n";
  * control mutates `plugin.settings` directly, then calls
  * `plugin.saveSettings()` and `plugin.refreshGraphLeaves()` so the graph view
  * reflects the change immediately.
+ *
+ * The controls are organised in thematic groups replicating the DOM structure
+ * of Obsidian's native settings pages: each group is a `div.setting-group`
+ * containing the heading and a `div.setting-items` card that visually merges
+ * the settings it contains (shared background, hairline separators). Core CSS
+ * styles those classes, so the look follows the active theme automatically.
  */
 export class SettingsTab extends PluginSettingTab {
 	private __i18n: I18n = getI18n();
@@ -43,12 +49,29 @@ export class SettingsTab extends PluginSettingTab {
 	}
 
 	/**
+	 * Creates a native-looking settings group: a `div.setting-group` wrapper
+	 * holding the section heading and a `div.setting-items` card in which the
+	 * caller renders the section's controls.
+	 *
+	 * @param containerEl Parent element of the group (the tab's container).
+	 * @param title       Localised section title.
+	 * @returns The `div.setting-items` element to which the section's
+	 *   `Setting` controls should be attached.
+	 */
+	private __createSettingsGroup(containerEl: HTMLElement, title: string): HTMLElement {
+		const group = containerEl.createDiv({ cls: "setting-group" });
+		new Setting(group).setName(title).setHeading();
+		return group.createDiv({ cls: "setting-items" });
+	}
+
+	/**
 	 * Render the settings tab in the UI.
 	 *
 	 * @remarks
 	 * Called by Obsidian whenever the settings panel is opened or the tab is
 	 * selected. Clears the container element and rebuilds all controls from
-	 * scratch.
+	 * scratch. Groups are ordered by thematic importance: folders, headings,
+	 * folder filtering, weighting.
 	 */
 	public override display(): void {
 		// Cancel any timer left over from a previous display cycle; the UI is
@@ -62,22 +85,10 @@ export class SettingsTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		// General settings come first, without a heading, then the controls are
-		// grouped under section headings — mirroring Obsidian's own settings pages.
-		new Setting(containerEl)
-			.setName(this.__i18n.settings.weightNodesBySubtree.name)
-			.setDesc(this.__i18n.settings.weightNodesBySubtree.desc)
-			.addToggle((component) => {
-				component.setValue(this.__plugin.settings.weightNodesBySubtree).onChange(async (value) => {
-					this.__plugin.settings.weightNodesBySubtree = value;
-					await this.__plugin.saveSettings();
-					this.__plugin.refreshGraphLeaves();
-				});
-			});
+		// ── Folders ─────────────────────────────────────────────────────────
+		const foldersGroup = this.__createSettingsGroup(containerEl, this.__i18n.settings.sections.folders);
 
-		new Setting(containerEl).setName(this.__i18n.settings.sections.folders).setHeading();
-
-		new Setting(containerEl)
+		new Setting(foldersGroup)
 			.setName(this.__i18n.settings.showFolderNodes.name)
 			.setDesc(this.__i18n.settings.showFolderNodes.desc)
 			.addToggle((component) => {
@@ -88,7 +99,7 @@ export class SettingsTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl)
+		new Setting(foldersGroup)
 			.setName(this.__i18n.settings.hideRootNode.name)
 			.setDesc(this.__i18n.settings.hideRootNode.desc)
 			.addToggle((component) => {
@@ -99,7 +110,7 @@ export class SettingsTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl)
+		new Setting(foldersGroup)
 			.setName(this.__i18n.settings.nodeColor.name)
 			.setDesc(this.__i18n.settings.nodeColor.desc)
 			.addColorPicker((component) => {
@@ -110,9 +121,35 @@ export class SettingsTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl).setName(this.__i18n.settings.sections.folderFilter).setHeading();
+		// ── Headings ────────────────────────────────────────────────────────
+		const headingsGroup = this.__createSettingsGroup(containerEl, this.__i18n.settings.sections.headings);
 
-		new Setting(containerEl)
+		new Setting(headingsGroup)
+			.setName(this.__i18n.settings.showHeadingNodes.name)
+			.setDesc(this.__i18n.settings.showHeadingNodes.desc)
+			.addToggle((component) => {
+				component.setValue(this.__plugin.settings.showHeadingNodes).onChange(async (value) => {
+					this.__plugin.settings.showHeadingNodes = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
+		new Setting(headingsGroup)
+			.setName(this.__i18n.settings.headingNodeColor.name)
+			.setDesc(this.__i18n.settings.headingNodeColor.desc)
+			.addColorPicker((component) => {
+				component.setValue(this.__plugin.settings.headingNodeColor).onChange(async (value) => {
+					this.__plugin.settings.headingNodeColor = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
+		// ── Folder filtering ────────────────────────────────────────────────
+		const filterGroup = this.__createSettingsGroup(containerEl, this.__i18n.settings.sections.folderFilter);
+
+		new Setting(filterGroup)
 			.setName(this.__i18n.settings.folderFilterMode.name)
 			.setDesc(this.__i18n.settings.folderFilterMode.desc)
 			.addDropdown((component) => {
@@ -127,7 +164,7 @@ export class SettingsTab extends PluginSettingTab {
 					});
 			});
 
-		new Setting(containerEl)
+		new Setting(filterGroup)
 			.setName(this.__i18n.settings.folderFilterList.name)
 			.setDesc(this.__i18n.settings.folderFilterList.desc)
 			.addTextArea((component) => {
@@ -165,7 +202,7 @@ export class SettingsTab extends PluginSettingTab {
 					});
 			});
 
-		new Setting(containerEl)
+		new Setting(filterGroup)
 			.setName(this.__i18n.settings.folderFilterHideFiles.name)
 			.setDesc(this.__i18n.settings.folderFilterHideFiles.desc)
 			.addToggle((component) => {
@@ -176,25 +213,15 @@ export class SettingsTab extends PluginSettingTab {
 				});
 			});
 
-		new Setting(containerEl).setName(this.__i18n.settings.sections.headings).setHeading();
+		// ── Weighting ───────────────────────────────────────────────────────
+		const weightingGroup = this.__createSettingsGroup(containerEl, this.__i18n.settings.sections.weighting);
 
-		new Setting(containerEl)
-			.setName(this.__i18n.settings.showHeadingNodes.name)
-			.setDesc(this.__i18n.settings.showHeadingNodes.desc)
+		new Setting(weightingGroup)
+			.setName(this.__i18n.settings.weightNodesBySubtree.name)
+			.setDesc(this.__i18n.settings.weightNodesBySubtree.desc)
 			.addToggle((component) => {
-				component.setValue(this.__plugin.settings.showHeadingNodes).onChange(async (value) => {
-					this.__plugin.settings.showHeadingNodes = value;
-					await this.__plugin.saveSettings();
-					this.__plugin.refreshGraphLeaves();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName(this.__i18n.settings.headingNodeColor.name)
-			.setDesc(this.__i18n.settings.headingNodeColor.desc)
-			.addColorPicker((component) => {
-				component.setValue(this.__plugin.settings.headingNodeColor).onChange(async (value) => {
-					this.__plugin.settings.headingNodeColor = value;
+				component.setValue(this.__plugin.settings.weightNodesBySubtree).onChange(async (value) => {
+					this.__plugin.settings.weightNodesBySubtree = value;
 					await this.__plugin.saveSettings();
 					this.__plugin.refreshGraphLeaves();
 				});

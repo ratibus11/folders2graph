@@ -13,6 +13,7 @@ export const enUS: I18n = {
 			folders: "Folders",
 			folderFilter: "Folder filtering",
 			headings: "Headings",
+			weighting: "Weighting",
 		},
 		showFolderNodes: {
 			name: "Show folders",

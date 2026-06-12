@@ -12,6 +12,7 @@ export const frFR: I18n = {
 			folders: "Dossiers",
 			folderFilter: "Filtrage des dossiers",
 			headings: "Titres",
+			weighting: "Pondération",
 		},
 		showFolderNodes: {
 			name: "Afficher les dossiers",

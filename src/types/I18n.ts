@@ -14,6 +14,7 @@ export type I18n = {
 			folders: string;
 			folderFilter: string;
 			headings: string;
+			weighting: string;
 		};
 		showFolderNodes: {
 			name: string;
