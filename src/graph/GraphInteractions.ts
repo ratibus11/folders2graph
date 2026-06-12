@@ -216,18 +216,14 @@ export class GraphInteractions {
 				return Promise.resolve();
 			}
 
-			// Mod+left-click on a folder node (not the vault root) → pre-fill the
-			// graph search field with a path filter for that folder. The Shift
-			// branch above is evaluated first: Shift+Mod (fold) takes priority.
-			// File/heading node IDs are not in `getFolderNodeIds()` so they fall
-			// through to the original handler, preserving the native Mod+click
-			// behaviour (open in new tab) for those node types.
-			if (
-				this.modHeld &&
-				activeIsGraph &&
-				this.getFolderNodeIds().has(linktext) &&
-				linktext !== "/"
-			) {
+			// Mod+left-click on a folder node → pre-fill the graph search field
+			// with a path filter for that folder; on the vault root, clear the
+			// search field instead (reset). The Shift branch above is evaluated
+			// first: Shift+Mod (fold) takes priority. File/heading node IDs are
+			// not in `getFolderNodeIds()` so they fall through to the original
+			// handler, preserving the native Mod+click behaviour (open in new
+			// tab) for those node types.
+			if (this.modHeld && activeIsGraph && this.getFolderNodeIds().has(linktext)) {
 				this.applyFolderPathFilter(linktext);
 				return Promise.resolve();
 			}
@@ -255,8 +251,10 @@ export class GraphInteractions {
 	 * folder node, applies the filter, and opens the graph controls panel so
 	 * the user can see the pre-filled field.
 	 *
-	 * @param folderNodeId A folder node ID in the form `"/path/to/folder"`.
-	 *   Must not be `"/"` (vault root) — callers are responsible for that guard.
+	 * @param folderNodeId A folder node ID in the form `"/path/to/folder"`, or
+	 *   `"/"` for the vault root — the root CLEARS the search field instead of
+	 *   filtering (a path filter covering the whole vault would be pointless,
+	 *   while clearing gives Mod+click on the root a natural "reset" semantic).
 	 *
 	 * @remarks
 	 * **Internal API dependency.** This method relies entirely on undocumented
@@ -283,8 +281,9 @@ export class GraphInteractions {
 		}
 
 		// Folder node IDs start with "/"; strip it to get the vault-relative path.
+		// The vault root clears the field (reset) instead of setting a filter.
 		const vaultPath = folderNodeId.slice(1);
-		search.setValue('path:"' + vaultPath + '"');
+		search.setValue(vaultPath === "" ? "" : 'path:"' + vaultPath + '"');
 
 		// Push the new value into the engine.
 		if (engine?.updateSearch) {
