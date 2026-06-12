@@ -333,9 +333,11 @@ export class GraphInteractions {
 	 *
 	 * @remarks
 	 * The heading is inserted as a level-2 Markdown heading (`## headingText`)
-	 * preceded by two blank lines so it is visually separated from any existing
-	 * content. Level 2 is chosen as a reasonable default that fits under a
-	 * typical top-level (`#`) overview section without requiring the user to
+	 * separated from the existing content by exactly one blank line: trailing
+	 * whitespace is stripped before appending, so repeated insertions never
+	 * accumulate empty lines, and an empty file receives the heading alone.
+	 * Level 2 is chosen as a reasonable default that fits under a typical
+	 * top-level (`#`) overview section without requiring the user to
 	 * restructure the document.
 	 *
 	 * `app.vault.process` is used instead of a read→modify→write cycle because
@@ -383,9 +385,15 @@ export class GraphInteractions {
 		let writtenFile: Nullable<TFile> = targetFile;
 
 		if (targetFile) {
-			// File exists — append the heading to the existing content.
+			// File exists — append the heading to the existing content, with
+			// exactly one blank line of separation: trailing whitespace/newlines
+			// are stripped first so repeated insertions never accumulate empty
+			// lines, and an empty file receives the heading alone.
 			await this.app.vault.process(targetFile, (content: string) => {
-				return content + "\n\n## " + headingText + "\n";
+				const trimmed = content.replace(/\s+$/, "");
+				return trimmed === ""
+					? "## " + headingText + "\n"
+					: trimmed + "\n\n## " + headingText + "\n";
 			});
 		} else {
 			// File does not exist — derive a vault path from filePart and create
@@ -404,10 +412,10 @@ export class GraphInteractions {
 
 			// Create parent directories if they are missing.  vault.createFolder
 			// creates intermediate directories automatically; errors are swallowed
-			// because the directory may already exist.
-			const parentDir = lastSlash >= 0
-				? (filePart.startsWith("/") ? filePart.slice(1, lastSlash) : filePart.slice(0, lastSlash))
-				: "";
+			// because the directory may already exist. The parent is derived from
+			// `vaultPath` (whose indices `lastSlash` refers to) — NOT from
+			// `filePart`, whose leading `/` would shift every index by one.
+			const parentDir = lastSlash >= 0 ? vaultPath.slice(0, lastSlash) : "";
 			if (parentDir) {
 				try {
 					await this.app.vault.createFolder(parentDir);
