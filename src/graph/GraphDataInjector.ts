@@ -364,12 +364,13 @@ export class GraphDataInjector {
 				// After real headings are in place, scan every source file for links
 				// that reference a heading that is absent from the target file — those
 				// become ghost heading nodes attached to the target file node.
-				// Only active when the target side is anchored at a heading node.
+				// Always active when heading nodes are shown: the anchor mode only
+				// governs the link EDGES, never whether ghost headings are displayed.
 				// Must run BEFORE rewireFragmentLinksForFile so that ghost heading
 				// nodes (including those for unresolved target files) are already
 				// present in data.nodes when the rewire pass looks them up.
 				sourceNodeIds.forEach((nodeId) =>
-					this.injectGhostHeadingNodesForFile(data, nodeId, anchorTargetAtHeading),
+					this.injectGhostHeadingNodesForFile(data, nodeId),
 				);
 
 				// After ALL real and ghost heading nodes are in place, rewire any edge
@@ -868,14 +869,15 @@ export class GraphDataInjector {
 	 * target file's metadata cache, and inserts a ghost heading node for each
 	 * missing heading.
 	 *
-	 * @param data                  Mutable graph data object being built during this setData pass.
-	 * @param nodeId                Graph node ID of the source Markdown file.
-	 * @param anchorTargetAtHeading When `false` (file-file or heading-file modes),
-	 *   this method returns immediately without creating any ghost nodes: the
-	 *   target side is anchored at the file and ghost heading nodes are not
-	 *   relevant. Derived from `settings.headingLinkAnchorMode`.
+	 * @param data   Mutable graph data object being built during this setData pass.
+	 * @param nodeId Graph node ID of the source Markdown file.
 	 *
 	 * @remarks
+	 * Ghost heading nodes are ALWAYS created when heading nodes are shown — the
+	 * `headingLinkAnchorMode` setting only governs how the link EDGES are
+	 * anchored (see `rewireFragmentLinksForFile`), never whether the ghost
+	 * heading is displayed.
+	 *
 	 * This method must be called AFTER `injectHeadingNodesForFile` for all source
 	 * files so that real heading nodes are already in `data.nodes` when the
 	 * deduplication check runs.  If the derived ID already exists in `data.nodes`
@@ -901,7 +903,7 @@ export class GraphDataInjector {
 	 * // Source file "notes/index.md" contains [[guide#Installation]] but
 	 * // "docs/guide.md" has no heading "Installation":
 	 * //
-	 * // After injectGhostHeadingNodesForFile(data, "notes/index", true):
+	 * // After injectGhostHeadingNodesForFile(data, "notes/index"):
 	 * // data.nodes["docs/guide#Installation"] = { type: "f2g_heading_node", links: {} }
 	 * // data.nodes["docs/guide"].links["docs/guide#Installation"] = true
 	 * // ghostHeadingIds contains "docs/guide#Installation"
@@ -911,19 +913,12 @@ export class GraphDataInjector {
 	 * // does not exist in the vault.  Obsidian stores the unresolved node as
 	 * // e.g. "/a/b/c.md" or "/a/b/c" in data.nodes:
 	 * //
-	 * // After injectGhostHeadingNodesForFile(data, "notes/index", true):
+	 * // After injectGhostHeadingNodesForFile(data, "notes/index"):
 	 * // data.nodes["/a/b/c#missing"] = { type: "f2g_heading_node", links: {} }
 	 * // data.nodes["/a/b/c"].links["/a/b/c#missing"] = true
 	 * // ghostHeadingIds contains "/a/b/c#missing"
 	 */
-	private injectGhostHeadingNodesForFile(
-		data: RendererData,
-		nodeId: string,
-		anchorTargetAtHeading: boolean,
-	): void {
-		// file-file and heading-file: the target is anchored at the file node;
-		// ghost heading nodes are not relevant for these modes.
-		if (!anchorTargetAtHeading) return;
+	private injectGhostHeadingNodesForFile(data: RendererData, nodeId: string): void {
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
 		if (!file || file.extension !== "md") return;
 

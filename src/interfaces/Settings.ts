@@ -79,20 +79,21 @@ export type Settings = {
 	 * For a link `[[B#Section]]` written in file A (optionally under heading H):
 	 *
 	 * - `"file-file"` — no intervention; the native A→B edge is preserved as-is.
-	 *   Ghost heading nodes are NOT created for missing fragments (the target side
-	 *   is anchored at the file level).
 	 * - `"file-heading"` — the edge becomes A→B#Section (real heading text,
 	 *   case-insensitive match).  The native A→B edge is removed unless A also
 	 *   has a bare (fragment-free) link to B.  Even when the ref sits under a
-	 *   heading source, the source anchor remains the file.  Ghost heading nodes
-	 *   are created when the target heading is missing.
+	 *   heading source, the source anchor remains the file.
 	 * - `"heading-file"` — for refs under a source heading H, the edge becomes
 	 *   A#H→B (target anchored at the file).  The native A→B edge is removed
 	 *   under the same bare-link rule.  Refs at the file level keep the native
-	 *   A→B edge unchanged.  Ghost heading nodes are NOT created (target is file).
+	 *   A→B edge unchanged.
 	 * - `"heading-heading"` — current default behaviour: under heading H, the
 	 *   edge is A#H→B#Section; at the file level, A→B#Section.  Native edge
-	 *   removed unless a bare link coexists.  Ghost heading nodes created.
+	 *   removed unless a bare link coexists.
+	 *
+	 * The mode only governs how link EDGES are anchored — ghost heading nodes
+	 * for missing fragments are always displayed (when heading nodes are shown),
+	 * whatever the mode.
 	 *
 	 * Defaults to `"heading-heading"`.
 	 */
