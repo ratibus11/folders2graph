@@ -1,4 +1,4 @@
-import { App, OpenViewState, PaneType, TFolder, Workspace } from "obsidian";
+import { App, OpenViewState, PaneType, TFile, TFolder, Workspace, getLinkpath } from "obsidian";
 import { GraphLeafWithCustomRenderer } from "interfaces/GraphLeafWithCustomRenderer";
 import { Nullable } from "types/Nullable";
 
@@ -28,6 +28,9 @@ export class GraphInteractions {
 	private getFolderNodeIds: () => Set<string>;
 	private getAllNodeIds: () => Set<string>;
 	private handleFoldToggle: (nodeId: string) => void;
+	private getGhostFolderIds: () => Set<string>;
+	private getGhostHeadingIds: () => Set<string>;
+	private refreshGraphLeaves: () => void;
 
 	/** True while the Shift key is held down. Tracked via capture-phase
 	 * keydown/keyup on window, with a blur-reset to handle cases where the
@@ -77,24 +80,37 @@ export class GraphInteractions {
 	};
 
 	/**
-	 * @param app               Obsidian application instance.
-	 * @param getFolderNodeIds  Returns the set of currently injected folder
+	 * @param app                  Obsidian application instance.
+	 * @param getFolderNodeIds     Returns the set of currently injected folder
 	 *   node IDs; consulted by the `openLinkText` wrapper.
-	 * @param getAllNodeIds      Returns the full set of node IDs from the last
+	 * @param getAllNodeIds         Returns the full set of node IDs from the last
 	 *   `setData` pass; used to validate Shift+click targets.
-	 * @param handleFoldToggle  Callback invoked when a Shift+left-click on a
+	 * @param handleFoldToggle     Callback invoked when a Shift+left-click on a
 	 *   valid graph node is detected.
+	 * @param getGhostFolderIds    Returns the set of ghost folder IDs (folders
+	 *   that were injected but have no real `TFolder` in the vault).
+	 * @param getGhostHeadingIds   Returns the set of ghost heading IDs (headings
+	 *   synthesised from unresolved `#`-fragment wikilinks).
+	 * @param refreshGraphLeaves   Triggers a full graph refresh; called after
+	 *   ghost content has been created so the re-render reflects the new vault
+	 *   state.
 	 */
 	constructor(
 		app: App,
 		getFolderNodeIds: () => Set<string>,
 		getAllNodeIds: () => Set<string>,
 		handleFoldToggle: (nodeId: string) => void,
+		getGhostFolderIds: () => Set<string>,
+		getGhostHeadingIds: () => Set<string>,
+		refreshGraphLeaves: () => void,
 	) {
 		this.app = app;
 		this.getFolderNodeIds = getFolderNodeIds;
 		this.getAllNodeIds = getAllNodeIds;
 		this.handleFoldToggle = handleFoldToggle;
+		this.getGhostFolderIds = getGhostFolderIds;
+		this.getGhostHeadingIds = getGhostHeadingIds;
+		this.refreshGraphLeaves = refreshGraphLeaves;
 	}
 
 	/**
@@ -167,21 +183,25 @@ export class GraphInteractions {
 	 * Wraps `workspace.openLinkText` so that clicks on folder nodes reveal the
 	 * corresponding folder in the file explorer instead of failing to resolve a
 	 * non-existent file, so that Shift+left-click on any graph node toggles
-	 * its fold state instead of navigating, and so that Mod+left-click on a
-	 * folder node pre-fills the graph search field with a path filter for that
-	 * folder.
+	 * its fold state instead of navigating, so that Mod+left-click on a folder
+	 * node pre-fills the graph search field with a path filter for that folder,
+	 * and so that a plain click on a ghost node creates the missing vault content.
 	 *
 	 * @remarks
 	 * The wrapper only intercepts linktexts that match a currently-injected
-	 * folder node ID, so regular wikilink clicks are unaffected.
+	 * folder node ID or a known ghost node, so regular wikilink clicks are
+	 * unaffected.
 	 *
 	 * Guard priority (highest to lowest):
 	 * 1. Shift held + graph active + any node → fold toggle.
 	 * 2. Mod held + graph active + folder node (non-root) → path-filter prefill.
-	 * 3. Folder node (any) → reveal in file explorer.
-	 * 4. All other linktexts → original `openLinkText`.
+	 * 3. Ghost folder node → create the vault folder, refresh. Real folder
+	 *    nodes continue to step 5.
+	 * 4. Ghost heading node → append the heading to the target file, refresh.
+	 * 5. Real folder node (any) → reveal in file explorer.
+	 * 6. All other linktexts → original `openLinkText`.
 	 *
-	 * Both gated branches require the most recent leaf to be a graph view:
+	 * Both gated branches (1, 2) require the most recent leaf to be a graph view:
 	 * clicking a graph node activates its leaf before `openLinkText` fires,
 	 * while a Shift/Mod+click on an editor wikilink keeps the editor leaf
 	 * active — so editor links are never accidentally swallowed.
@@ -228,6 +248,20 @@ export class GraphInteractions {
 				return Promise.resolve();
 			}
 
+			// Plain click on a ghost folder → create the vault folder and refresh
+			// so the graph re-renders the node as a real folder (filled disc).
+			// The folder may have been created concurrently between the click and
+			// this handler — createFolder errors are swallowed silently.
+			if (this.getGhostFolderIds().has(linktext)) {
+				return this.createGhostFolder(linktext);
+			}
+
+			// Plain click on a ghost heading → append the heading to the end of
+			// the target file and refresh.
+			if (this.getGhostHeadingIds().has(linktext)) {
+				return this.createGhostHeading(linktext);
+			}
+
 			if (this.getFolderNodeIds().has(linktext)) {
 				this.revealFolderInExplorer(linktext);
 				return Promise.resolve();
@@ -244,6 +278,77 @@ export class GraphInteractions {
 		if (!this.originalOpenLinkText) return;
 		this.app.workspace.openLinkText = this.originalOpenLinkText;
 		this.originalOpenLinkText = null;
+	}
+
+	/**
+	 * Creates the vault folder backing a ghost folder node, then triggers a full
+	 * graph refresh so the node transitions from ghost (outlined) to real (filled).
+	 *
+	 * @param folderNodeId A `/`-prefixed ghost folder node ID (e.g. `"/a/b"`).
+	 * @returns A `Promise` that resolves after the folder is created and the
+	 *   refresh is scheduled.
+	 *
+	 * @remarks
+	 * `app.vault.createFolder` is called with `await` so the refresh fires only
+	 * after the folder exists in the vault and the metadata cache can recognise
+	 * it as a real `TFolder` on the next `setData` pass.
+	 *
+	 * If the folder already exists (concurrent creation) the error is swallowed
+	 * silently — the refresh still runs so the graph state is consistent.
+	 */
+	private async createGhostFolder(folderNodeId: string): Promise<void> {
+		const vaultPath = folderNodeId.slice(1);
+		try {
+			await this.app.vault.createFolder(vaultPath);
+		} catch {
+			// Folder may have been created concurrently — ignore and refresh anyway.
+		}
+		this.refreshGraphLeaves();
+	}
+
+	/**
+	 * Appends a new heading to the end of the target file referenced by a ghost
+	 * heading node, then triggers a full graph refresh.
+	 *
+	 * @param ghostHeadingId A ghost heading node ID in the form
+	 *   `targetNodeId#headingText` (e.g. `"docs/guide#Installation"`).
+	 * @returns A `Promise` that resolves after the heading is written and the
+	 *   refresh is scheduled.
+	 *
+	 * @remarks
+	 * The heading is inserted as a level-2 Markdown heading (`## headingText`)
+	 * preceded by two blank lines so it is visually separated from any existing
+	 * content. Level 2 is chosen as a reasonable default that fits under a
+	 * typical top-level (`#`) overview section without requiring the user to
+	 * restructure the document.
+	 *
+	 * `app.vault.process` is used instead of a read→modify→write cycle because
+	 * it holds an exclusive lock on the file for the duration of the callback,
+	 * preventing conflicts with other concurrent writers (e.g. the sync engine).
+	 *
+	 * The target file is resolved from the portion of the ID before the first
+	 * `#`. If the file cannot be found the method is a no-op.
+	 */
+	private async createGhostHeading(ghostHeadingId: string): Promise<void> {
+		const hashIdx = ghostHeadingId.indexOf("#");
+		if (hashIdx < 0) return;
+
+		const filePart = ghostHeadingId.slice(0, hashIdx);
+		const headingText = ghostHeadingId.slice(hashIdx + 1);
+
+		// Resolve the target file via the metadata cache (handles both full-path
+		// and basename-only node IDs).
+		const targetFile: Nullable<TFile> = this.app.metadataCache.getFirstLinkpathDest(
+			getLinkpath(filePart),
+			"",
+		);
+		if (!targetFile) return;
+
+		await this.app.vault.process(targetFile, (content: string) => {
+			return content + "\n\n## " + headingText + "\n";
+		});
+
+		this.refreshGraphLeaves();
 	}
 
 	/**

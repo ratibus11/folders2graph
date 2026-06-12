@@ -109,6 +109,9 @@ export default class Folders2GraphPlugin extends Plugin {
 			() => this.__injector.getFolderNodeIds(),
 			() => this.__injector.getAllNodeIds(),
 			(nodeId) => this.__foldingManager.handleFoldToggle(nodeId),
+			() => this.__injector.getGhostFolderIds(),
+			() => this.__injector.getGhostHeadingIds(),
+			() => this.refreshGraphLeaves(),
 		);
 
 		this.__patcher = new NodePrototypePatcher(
