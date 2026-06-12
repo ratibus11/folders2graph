@@ -382,6 +382,10 @@ export class NodePrototypePatcher {
 						}
 
 						this.circle.clear();
+						// The half-disc has a real fill so PIXI containsPoint works
+						// natively. Clear any hitArea left by a preceding ghost draw so
+						// it does not shadow the native geometry test.
+						this.circle.hitArea = null;
 						this.circle.beginFill(0xffffff, 1);
 						this.circle.moveTo(cx, cy);
 						this.circle.arc(cx, cy, baseRadius, angle - Math.PI / 2, angle + Math.PI / 2);
@@ -419,12 +423,25 @@ export class NodePrototypePatcher {
 						const thickness = baseRadius * 0.18;
 
 						this.circle.clear();
-						// Transparent fill keeps the PIXI hit area intact so the node
-						// remains clickable in the centre of the ring.
-						this.circle.beginFill(0xffffff, 0);
+						// No fill: the ring is stroke-only. A beginFill with alpha=0 would
+						// make FillStyle.visible false in PIXI v6, causing containsPoint to
+						// return false and breaking all hover and click hit-testing.
 						this.circle.lineStyle(thickness, 0xffffff, 1);
 						this.circle.drawCircle(cx, cy, baseRadius - thickness / 2);
 						this.circle.endFill();
+
+						// Set an explicit hitArea so PIXI's InteractionManager still
+						// detects pointer events inside the ring (the disc centre as well
+						// as the stroke band). Without a fill, containsPoint would miss
+						// the interior. Coordinates are LOCAL to the DisplayObject, which
+						// is the same space used for drawing above.
+						this.circle.hitArea = {
+							contains: (hx: number, hy: number): boolean => {
+								const dx = hx - cx;
+								const dy = hy - cy;
+								return dx * dx + dy * dy <= baseRadius * baseRadius;
+							},
+						};
 
 						this.__f2gGhostDrawn = true;
 						this.__f2gHalfDrawn = false;
@@ -444,6 +461,9 @@ export class NodePrototypePatcher {
 						const baseCenter: { x: number; y: number } = this.__f2gBaseCenter ?? { x: 0, y: 0 };
 
 						this.circle.clear();
+						// Restore native hit-testing: a real fill makes containsPoint work
+						// naturally; clear any hitArea that may have been set by a ghost draw.
+						this.circle.hitArea = null;
 						this.circle.beginFill(0xffffff, 1);
 						if (typeof this.circle.drawCircle === "function") {
 							this.circle.drawCircle(baseCenter.x, baseCenter.y, baseRadius);
@@ -470,6 +490,9 @@ export class NodePrototypePatcher {
 
 						this.circle.clear();
 						this.circle.lineStyle(0); // clear any active line style
+						// Remove the explicit hitArea set during ghost rendering so PIXI's
+						// native containsPoint (driven by the real fill below) takes over.
+						this.circle.hitArea = null;
 						this.circle.beginFill(0xffffff, 1);
 						if (typeof this.circle.drawCircle === "function") {
 							this.circle.drawCircle(baseCenter.x, baseCenter.y, baseRadius);
