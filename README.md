@@ -47,7 +47,7 @@ Noice functionnalities:
 
 ## Changelog
 
-### 2026-06-13
+### 2026-06-13 - **1.2.0**
 
 - New features
     - Heading nodes ([#24](https://github.com/ratibus11/folders2graph/issues/24)) — Display each note's heading
@@ -94,14 +94,14 @@ Noice functionnalities:
       nodes — the crash reported in [#35](https://github.com/ratibus11/folders2graph/pull/35) is structurally impossible
       now.
 
-### 2024-11-14
+### 2024-11-14 - **1.1.0**
 
 - Add settings tab
 - Toggle display of the root folder node (`/`) (from [#6](https://github.com/ratibus11/folders2graph/issues/6))
   (_displayed by default_)
 - Supports French and English. Feel free to suggest new translations!
 
-### 2024-02-05
+### 2024-02-05 - **1.0.0**
 
 - Plugin first release.
 - Allows to display your Obsidian vault folder structure into your graphs by enabling the extension.

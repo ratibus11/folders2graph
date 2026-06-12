@@ -2,7 +2,7 @@
 	"name": "folders2graph",
 	"displayName": "Folders 2 Graph",
 	"description": "Display your Obsidian vault folder structure into your graphs.",
-	"version": "0.0.1",
+	"version": "1.2.0",
 	"author": {
 		"name": "Lucas Bastian",
 		"email": "ratibus11@icloud.com",
