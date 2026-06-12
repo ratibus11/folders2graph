@@ -29,6 +29,16 @@ type CustomLeaf = {
 		/** DOM container of the graph view. Used to install the contextmenu
 		 * suppression listener in `GraphInteractions`. */
 		containerEl: HTMLElement;
+		/** Internal options engine of the graph view (Obsidian internal API).
+		 * `getOptions`/`setOptions` carry the per-leaf graph configuration
+		 * (filters, groups, display flags) — the same payload the Bookmarks
+		 * plugin serialises and restores. Used to preserve per-leaf options
+		 * across the plugin's `unload/load` refresh cycle, because the view's
+		 * own `onload` resets them to the global graph options. */
+		dataEngine?: {
+			getOptions?: () => unknown;
+			setOptions?: (options: unknown) => void;
+		};
 	};
 };
 
