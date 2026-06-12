@@ -164,7 +164,9 @@ export class GraphDataInjector {
 	 *    is `true`).
 	 * 3. Inject real heading nodes (when `settings.showHeadingNodes` is `true`),
 	 *    then synthesise ghost heading nodes for any `#`-fragment wikilinks whose
-	 *    target heading is absent from the destination file's metadata cache.
+	 *    target heading is absent from the destination file's metadata cache
+	 *    (including links to unresolved files), then rewire fragment-link edges to
+	 *    their target heading (real or ghost) node.
 	 * 4. Snapshot `allNodeIds` for Shift+click validation.
 	 * 5. Purge stale `hiddenNodes` entries against the vault; save if changed.
 	 * 6. Compute the collapsed set for O(1) frame-time lookups.
@@ -359,25 +361,28 @@ export class GraphDataInjector {
 					this.injectHeadingNodesForFile(data, nodeId, anchorSourceAtHeading, anchorTargetAtHeading),
 				);
 
-				// After ALL real heading nodes are in place, rewire any edge (native
-				// file→file or injected heading→file) whose corresponding link carries
-				// a #fragment pointing to an existing heading: each such edge is
-				// redirected to the target heading node (the old edge is removed unless
-				// there is also a bare, fragment-free link from the same source anchor
-				// to the same target file).
+				// After real headings are in place, scan every source file for links
+				// that reference a heading that is absent from the target file — those
+				// become ghost heading nodes attached to the target file node.
+				// Only active when the target side is anchored at a heading node.
+				// Must run BEFORE rewireFragmentLinksForFile so that ghost heading
+				// nodes (including those for unresolved target files) are already
+				// present in data.nodes when the rewire pass looks them up.
+				sourceNodeIds.forEach((nodeId) =>
+					this.injectGhostHeadingNodesForFile(data, nodeId, anchorTargetAtHeading),
+				);
+
+				// After ALL real and ghost heading nodes are in place, rewire any edge
+				// (native file→file or injected heading→file) whose corresponding link
+				// carries a #fragment pointing to an existing or ghost heading: each
+				// such edge is redirected to the target heading node (the old edge is
+				// removed unless there is also a bare, fragment-free link from the same
+				// source anchor to the same target file).
 				// Runs whenever target-side anchoring is at a heading (file-heading or
 				// heading-heading), and also when source-side anchoring is at a heading
 				// (heading-file) to handle native edge removal for under-heading refs.
 				sourceNodeIds.forEach((nodeId) =>
 					this.rewireFragmentLinksForFile(data, nodeId, anchorSourceAtHeading, anchorTargetAtHeading),
-				);
-
-				// After real headings are in place, scan every source file for links
-				// that reference a heading that is absent from the target file — those
-				// become ghost heading nodes attached to the target file node.
-				// Only active when the target side is anchored at a heading node.
-				sourceNodeIds.forEach((nodeId) =>
-					this.injectGhostHeadingNodesForFile(data, nodeId, anchorTargetAtHeading),
 				);
 
 				// Heading injection attaches referenced notes via resolveGraphNodeId,
@@ -581,8 +586,8 @@ export class GraphDataInjector {
 
 	/**
 	 * Rewires file→file (and heading→file) edges whose source link carries a
-	 * `#fragment` that resolves to an existing heading node in the target file,
-	 * and handles native edge removal for under-heading fragment refs when
+	 * `#fragment` that resolves to an existing or ghost heading node in the target
+	 * file, and handles native edge removal for under-heading fragment refs when
 	 * required by the anchor mode.
 	 *
 	 * @param data                  Mutable graph data object.
@@ -595,8 +600,9 @@ export class GraphDataInjector {
 	 *   from `settings.headingLinkAnchorMode`.
 	 *
 	 * @remarks
-	 * Must be called AFTER `injectHeadingNodesForFile` has run for ALL source
-	 * files so that every target heading node is already present in `data.nodes`.
+	 * Must be called AFTER both `injectHeadingNodesForFile` and
+	 * `injectGhostHeadingNodesForFile` have run for ALL source files so that every
+	 * target heading node (real and ghost) is already present in `data.nodes`.
 	 *
 	 * Returns early without any work when both flags are `false` (file-file mode),
 	 * because the native A→B edge is the intended representation and no rewiring
@@ -604,7 +610,7 @@ export class GraphDataInjector {
 	 *
 	 * **Target-at-heading modes** (`file-heading` and `heading-heading`):
 	 * Scans both file-level refs AND under-heading refs that carry a non-block
-	 * `#fragment` resolving to an existing heading node:
+	 * `#fragment` resolving to an existing or ghost heading node:
 	 * - For file-level refs: adds `sourceFileNode → targetHeadingNode` and
 	 *   removes `sourceFileNode → targetFileNode` unless a bare link coexists.
 	 * - For under-heading refs: adds `sourceHeadingNode → targetHeadingNode` and
@@ -613,6 +619,14 @@ export class GraphDataInjector {
 	 *   coexists.  The bare-link guard is scoped to the specific source heading
 	 *   node, not the file node.
 	 * The native `A→B` file-level edge is also removed when appropriate.
+	 *
+	 * When the target file is unresolved (does not exist in the vault),
+	 * `getFirstLinkpathDest` returns `null`.  In target-at-heading modes the
+	 * pass looks up the ghost heading node created by `injectGhostHeadingNodesForFile`
+	 * via `findUnresolvedNodeId` and a case-insensitive search over `ghostHeadingIds`,
+	 * then wires the source anchor to that ghost heading node and removes the
+	 * `source → unresolvedFileNode` edge (unless a bare link from the same anchor
+	 * to that unresolved node coexists).
 	 *
 	 * **Heading-file mode** (`anchorSourceAtHeading && !anchorTargetAtHeading`):
 	 * Does NOT rewire file-level refs (the native `A→B` is the correct
@@ -709,7 +723,48 @@ export class GraphDataInjector {
 				getLinkpath(ref.link),
 				file.path,
 			);
-			if (!dest) continue;
+
+			if (!dest) {
+				// ── Unresolved target ────────────────────────────────────────────
+				// The target file does not exist in the vault.  Fragment rewiring to
+				// a ghost heading only applies when the target side is anchored at a
+				// heading node (file-heading or heading-heading modes).
+				if (!anchorTargetAtHeading) continue;
+
+				const hashIdx = ref.link.indexOf("#");
+				if (hashIdx < 0) continue; // bare link to unresolved file — nothing to rewire
+
+				const fragment = ref.link.slice(hashIdx + 1);
+				if (fragment.startsWith("^")) continue; // block reference — skip
+
+				const rawPath = getLinkpath(ref.link.slice(0, hashIdx));
+				const unresolvedNodeId = this.findUnresolvedNodeId(data, rawPath);
+				if (!unresolvedNodeId || !data.nodes[unresolvedNodeId]) continue;
+
+				// Locate the ghost heading node created by injectGhostHeadingNodesForFile
+				// (which has already run before this pass).  The ghost ID uses the exact
+				// fragment casing from the first link that created it; search
+				// case-insensitively among ghostHeadingIds to find the canonical ID.
+				const fragmentLower = fragment.toLowerCase();
+				const ghostHeadingId =
+					[...this.ghostHeadingIds].find(
+						(id) =>
+							id.startsWith(unresolvedNodeId + "#") &&
+							id.slice(unresolvedNodeId.length + 1).toLowerCase() === fragmentLower,
+					) ?? null;
+				if (!ghostHeadingId || !data.nodes[ghostHeadingId]) continue;
+
+				// Determine the source anchor for this ref.
+				const sourceAnchorId =
+					anchorSourceAtHeading && owning
+						? this.buildHeadingNodeId(nodeId, owning.heading)
+						: nodeId;
+
+				const info = getOrCreateInfo(sourceAnchorId, unresolvedNodeId);
+				info.headingNodes.add(ghostHeadingId);
+				info.hasFragmentRef = true;
+				continue;
+			}
 
 			const targetFileNodeId = this.resolveGraphNodeId(data, dest);
 			if (!targetFileNodeId || !data.nodes[targetFileNodeId]) continue;
@@ -925,32 +980,10 @@ export class GraphDataInjector {
 			} else {
 				// ── Unresolved target ────────────────────────────────────────────
 				// The target file does not exist in the vault yet.  Look for the
-				// unresolved node in data.nodes using the same candidate set that
-				// resolveGraphNodeId would derive from a TFile, applied to the raw
-				// linkpath string directly.
-				//
-				// Candidates tried in order (matching resolveGraphNodeId):
-				//   1. rawPath as-is (e.g. "/a/b/c.md")
-				//   2. rawPath without .md extension (e.g. "/a/b/c")
-				//   3. basename only (e.g. "c")
+				// unresolved node in data.nodes using the shared helper, which
+				// applies the same candidate set as resolveGraphNodeId.
 				const rawPath = getLinkpath(targetPart);
-				const noExtPath =
-					rawPath.endsWith(".md") ? rawPath.slice(0, -3) : null;
-				// Derive basename: last path segment, stripping .md if present.
-				const lastSlash = rawPath.lastIndexOf("/");
-				const lastSegment = lastSlash >= 0 ? rawPath.slice(lastSlash + 1) : rawPath;
-				const baseName = lastSegment.endsWith(".md")
-					? lastSegment.slice(0, -3)
-					: lastSegment;
-
-				let unresolvedNodeId: string | null = null;
-				if (data.nodes[rawPath]) {
-					unresolvedNodeId = rawPath;
-				} else if (noExtPath && data.nodes[noExtPath]) {
-					unresolvedNodeId = noExtPath;
-				} else if (data.nodes[baseName]) {
-					unresolvedNodeId = baseName;
-				}
+				const unresolvedNodeId = this.findUnresolvedNodeId(data, rawPath);
 
 				if (!unresolvedNodeId) continue;
 
@@ -1047,6 +1080,38 @@ export class GraphDataInjector {
 		if (data.nodes[noExt]) return noExt;
 		if (data.nodes[dest.basename]) return dest.basename;
 		return dest.path;
+	}
+
+	/**
+	 * Looks up the graph node ID for an unresolved wikilink target using the
+	 * same candidate set as `resolveGraphNodeId`, applied to a raw linkpath
+	 * string rather than a `TFile`.
+	 *
+	 * @param data    Mutable graph data object.
+	 * @param rawPath Raw linkpath string (as returned by `getLinkpath`), e.g.
+	 *   `"/a/b/c.md"` or `"/a/b/c"` or `"c"`.
+	 * @returns The matching graph node ID, or `null` when no candidate is found.
+	 *
+	 * @remarks
+	 * Candidates tried in order (matching `resolveGraphNodeId`):
+	 * 1. `rawPath` as-is (e.g. `"/a/b/c.md"`).
+	 * 2. `rawPath` without `.md` extension (e.g. `"/a/b/c"`).
+	 * 3. Basename only, without `.md` (e.g. `"c"`).
+	 *
+	 * This method is the single source of truth for unresolved-node lookup and
+	 * is shared by both `injectGhostHeadingNodesForFile` and
+	 * `rewireFragmentLinksForFile` so the two passes always agree on which node
+	 * to attach ghost headings to.
+	 */
+	private findUnresolvedNodeId(data: RendererData, rawPath: string): Nullable<string> {
+		if (data.nodes[rawPath]) return rawPath;
+		const noExtPath = rawPath.endsWith(".md") ? rawPath.slice(0, -3) : null;
+		if (noExtPath && data.nodes[noExtPath]) return noExtPath;
+		const lastSlash = rawPath.lastIndexOf("/");
+		const lastSegment = lastSlash >= 0 ? rawPath.slice(lastSlash + 1) : rawPath;
+		const baseName = lastSegment.endsWith(".md") ? lastSegment.slice(0, -3) : lastSegment;
+		if (data.nodes[baseName]) return baseName;
+		return null;
 	}
 
 	/**
