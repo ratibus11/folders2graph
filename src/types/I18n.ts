@@ -47,5 +47,8 @@ export type I18n = {
 		toggleWeightNodesBySubtree: {
 			name: string;
 		};
+		toggleRootNode: {
+			name: string;
+		};
 	};
 };

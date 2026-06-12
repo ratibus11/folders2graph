@@ -46,5 +46,8 @@ export const frFR: I18n = {
 		toggleWeightNodesBySubtree: {
 			name: "Activer ou désactiver la pondération par sous-arbre",
 		},
+		toggleRootNode: {
+			name: "Afficher ou masquer le nœud racine",
+		},
 	},
 };

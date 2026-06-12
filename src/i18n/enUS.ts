@@ -47,5 +47,8 @@ export const enUS: I18n = {
 		toggleWeightNodesBySubtree: {
 			name: "Toggle subtree weight for graph nodes",
 		},
+		toggleRootNode: {
+			name: "Show or hide the root node",
+		},
 	},
 };
