@@ -48,6 +48,7 @@ export default class Folders2GraphPlugin extends Plugin {
 		nodeColor: "#5c8af5",
 		showHeadingNodes: false,
 		headingNodeColor: "#f5a55c",
+		headingLinkAnchorMode: "heading-heading",
 		hiddenNodes: {},
 		weightNodesBySubtree: false,
 		folderFilterMode: "exclude",

@@ -35,6 +35,14 @@ export const enUS: I18n = {
 			name: "Heading node color",
 			desc: "Color used to display heading nodes in the graph view. (defaulted to #f5a55c)",
 		},
+		headingLinkAnchorMode: {
+			name: "Heading link anchoring",
+			desc: "How wikilinks to a heading ([[note#Heading]]) are anchored in the graph — which end (file or heading node) is used on each side. (heading → heading by default)",
+			optionFileFile: "File → file",
+			optionFileHeading: "File → heading",
+			optionHeadingFile: "Heading → file",
+			optionHeadingHeading: "Heading → heading",
+		},
 		weightNodesBySubtree: {
 			name: "Weight nodes by their descendants",
 			desc: "When enabled, the size of a node is proportional to the number of linked descendants displayed in the graph. (disabled by default)",

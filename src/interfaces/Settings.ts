@@ -67,6 +67,37 @@ export type Settings = {
 	 */
 	folderFilterList: string[];
 	/**
+	 * Controls how wikilinks that reference a specific heading (`[[note#Heading]]`)
+	 * are represented as graph edges when `showHeadingNodes` is `true`.
+	 *
+	 * @remarks
+	 * Only affects links that contain a `#` fragment pointing to a heading.
+	 * Block-reference fragments (beginning with `^`) are always treated as bare
+	 * file links regardless of this setting.  Has no effect when
+	 * `showHeadingNodes` is `false`.
+	 *
+	 * For a link `[[B#Section]]` written in file A (optionally under heading H):
+	 *
+	 * - `"file-file"` — no intervention; the native A→B edge is preserved as-is.
+	 *   Ghost heading nodes are NOT created for missing fragments (the target side
+	 *   is anchored at the file level).
+	 * - `"file-heading"` — the edge becomes A→B#Section (real heading text,
+	 *   case-insensitive match).  The native A→B edge is removed unless A also
+	 *   has a bare (fragment-free) link to B.  Even when the ref sits under a
+	 *   heading source, the source anchor remains the file.  Ghost heading nodes
+	 *   are created when the target heading is missing.
+	 * - `"heading-file"` — for refs under a source heading H, the edge becomes
+	 *   A#H→B (target anchored at the file).  The native A→B edge is removed
+	 *   under the same bare-link rule.  Refs at the file level keep the native
+	 *   A→B edge unchanged.  Ghost heading nodes are NOT created (target is file).
+	 * - `"heading-heading"` — current default behaviour: under heading H, the
+	 *   edge is A#H→B#Section; at the file level, A→B#Section.  Native edge
+	 *   removed unless a bare link coexists.  Ghost heading nodes created.
+	 *
+	 * Defaults to `"heading-heading"`.
+	 */
+	headingLinkAnchorMode: "file-file" | "file-heading" | "heading-file" | "heading-heading";
+	/**
 	 * When `true`, files that fall outside the folder filter scope are removed
 	 * from the graph entirely (along with their heading nodes and any incoming
 	 * links) instead of remaining as disconnected native nodes.

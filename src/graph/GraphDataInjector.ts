@@ -347,19 +347,37 @@ export class GraphDataInjector {
 					const nodeData = data.nodes[nodeId];
 					return nodeData.type !== FOLDER_NODE_TAG && nodeData.type !== HEADING_NODE_TAG;
 				});
-				sourceNodeIds.forEach((nodeId) => this.injectHeadingNodesForFile(data, nodeId));
+
+				// Derive anchor flags from the setting once per setData pass.
+				// Both are `true` for the default "heading-heading" mode, which
+				// preserves existing behaviour exactly.
+				const mode = this.settings.headingLinkAnchorMode;
+				const anchorSourceAtHeading = mode === "heading-file" || mode === "heading-heading";
+				const anchorTargetAtHeading = mode === "file-heading" || mode === "heading-heading";
+
+				sourceNodeIds.forEach((nodeId) =>
+					this.injectHeadingNodesForFile(data, nodeId, anchorSourceAtHeading, anchorTargetAtHeading),
+				);
 
 				// After ALL real heading nodes are in place, rewire native file→file
 				// edges that carry a #fragment pointing to an existing heading: each
 				// such edge becomes a file→headingNode edge (the file→file edge is
 				// removed unless there is also a bare, fragment-free link from the same
 				// source to the same target file).
-				sourceNodeIds.forEach((nodeId) => this.rewireFragmentLinksForFile(data, nodeId));
+				// Runs whenever target-side anchoring is at a heading (file-heading or
+				// heading-heading), and also when source-side anchoring is at a heading
+				// (heading-file) to handle native edge removal for under-heading refs.
+				sourceNodeIds.forEach((nodeId) =>
+					this.rewireFragmentLinksForFile(data, nodeId, anchorSourceAtHeading, anchorTargetAtHeading),
+				);
 
 				// After real headings are in place, scan every source file for links
 				// that reference a heading that is absent from the target file — those
 				// become ghost heading nodes attached to the target file node.
-				sourceNodeIds.forEach((nodeId) => this.injectGhostHeadingNodesForFile(data, nodeId));
+				// Only active when the target side is anchored at a heading node.
+				sourceNodeIds.forEach((nodeId) =>
+					this.injectGhostHeadingNodesForFile(data, nodeId, anchorTargetAtHeading),
+				);
 
 				// Heading injection attaches referenced notes via resolveGraphNodeId,
 				// whose fallback returns the destination path even when that node is
@@ -418,8 +436,15 @@ export class GraphDataInjector {
 	 * heading node per heading, linking each link / embed found in the file
 	 * to the heading it lives under (the closest heading above it).
 	 *
-	 * @param data   Mutable graph data object being built during this setData pass.
-	 * @param nodeId Graph node ID of the source Markdown file.
+	 * @param data                  Mutable graph data object being built during this setData pass.
+	 * @param nodeId                Graph node ID of the source Markdown file.
+	 * @param anchorSourceAtHeading When `true`, the source end of an edge for a
+	 *   ref under a heading is the heading node; when `false` the source is the
+	 *   file node. Derived from `settings.headingLinkAnchorMode`.
+	 * @param anchorTargetAtHeading When `true`, a `#fragment` ref that resolves
+	 *   to an existing heading in the target file points to that heading node;
+	 *   when `false` it always points to the target file node regardless of the
+	 *   fragment. Derived from `settings.headingLinkAnchorMode`.
 	 *
 	 * @remarks
 	 * Heading node IDs follow Obsidian's wikilink format `path#heading` so a
@@ -432,17 +457,21 @@ export class GraphDataInjector {
 	 * Non-structural links (refs/embeds from a heading to another file) are
 	 * added as graph links but NOT registered in `StructuralHierarchy`.
 	 *
-	 * When a ref under a heading has a `#fragment` that matches an existing
-	 * heading in the target file (case-insensitive), the edge points to the
-	 * target heading node (`targetFileNode#realHeadingText`) instead of the
-	 * target file node.  This is safe here because heading injection runs for
-	 * all source files in one pass before any link wiring, so the target heading
-	 * nodes already exist in `data.nodes` when this loop runs for any given
-	 * source file.  (All calls to `injectHeadingNodesForFile` happen in a single
-	 * `forEach` before link wiring begins for any file.)
+	 * For refs under a heading that carry a `#fragment`:
+	 * - `anchorTargetAtHeading = true`: when the fragment matches an existing
+	 *   heading in the target file (case-insensitive), the edge points to the
+	 *   target heading node.  This is safe because heading injection runs for
+	 *   all source files before link wiring begins.
+	 * - `anchorTargetAtHeading = false`: the fragment is ignored for edge
+	 *   routing — the edge always points to the target file node.
+	 *
+	 * For `file-file` mode (`!anchorSourceAtHeading && !anchorTargetAtHeading`),
+	 * under-heading fragment refs produce no additional edge: the native A→B
+	 * edge already captures the relationship, and no heading-node target exists
+	 * on this side.
 	 *
 	 * Block-reference fragments (beginning with `^`) are excluded and always
-	 * resolve to the target file node.
+	 * resolve to the target file node regardless of mode.
 	 *
 	 * @example
 	 * // Source file "docs/guide" has two headings:
@@ -452,14 +481,19 @@ export class GraphDataInjector {
 	 * // Before injection:
 	 * // data.nodes = { "docs/guide": { type: "", links: {}, ... } }
 	 * //
-	 * // After injectHeadingNodesForFile(data, "docs/guide"):
+	 * // After injectHeadingNodesForFile(data, "docs/guide", true, true):
 	 * // data.nodes = {
 	 * //   "docs/guide":                    { type: "",                links: { "docs/guide#Overview": true } },
 	 * //   "docs/guide#Overview":           { type: "f2g_heading_node", links: { "docs/guide#Installation": true } },
 	 * //   "docs/guide#Installation":       { type: "f2g_heading_node", links: {} },
 	 * // }
 	 */
-	private injectHeadingNodesForFile(data: RendererData, nodeId: string): void {
+	private injectHeadingNodesForFile(
+		data: RendererData,
+		nodeId: string,
+		anchorSourceAtHeading: boolean,
+		anchorTargetAtHeading: boolean,
+	): void {
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
 		if (!file || file.extension !== "md") return;
 
@@ -500,9 +534,8 @@ export class GraphDataInjector {
 
 		// Attach each referenced note to the heading that contains the reference.
 		// These are NOT structural relationships.
-		// When the ref has a #fragment that resolves to an existing heading in the
-		// target file, the link is directed to the target heading node instead of
-		// the target file node.
+		// The source and target anchors are governed by anchorSourceAtHeading and
+		// anchorTargetAtHeading (derived from settings.headingLinkAnchorMode).
 		refs.forEach((ref) => {
 			const owning = this.findOwningHeading(headings, ref.position.start.line);
 			if (!owning) return;
@@ -519,66 +552,99 @@ export class GraphDataInjector {
 			// Determine whether the ref targets a specific heading in the dest file.
 			// Block references (^) are excluded — they do not correspond to headings.
 			const hashIdx = ref.link.indexOf("#");
+			const isFragmentRef = hashIdx >= 0 && !ref.link.slice(hashIdx + 1).startsWith("^");
+
 			let linkedNodeId = targetFileNodeId;
-			if (hashIdx >= 0) {
+			if (isFragmentRef && anchorTargetAtHeading) {
+				// Resolve the fragment to an existing heading node when the target
+				// side should be anchored at a heading node.
 				const fragment = ref.link.slice(hashIdx + 1);
-				if (!fragment.startsWith("^")) {
-					const destCache = this.app.metadataCache.getFileCache(dest);
-					const fragmentLower = fragment.toLowerCase();
-					const matchedHeading = destCache?.headings?.find(
-						(h) => h.heading.toLowerCase() === fragmentLower,
+				const destCache = this.app.metadataCache.getFileCache(dest);
+				const fragmentLower = fragment.toLowerCase();
+				const matchedHeading = destCache?.headings?.find(
+					(h) => h.heading.toLowerCase() === fragmentLower,
+				);
+				if (matchedHeading) {
+					const headingNodeId = this.buildHeadingNodeId(
+						targetFileNodeId,
+						matchedHeading.heading,
 					);
-					if (matchedHeading) {
-						const headingNodeId = this.buildHeadingNodeId(
-							targetFileNodeId,
-							matchedHeading.heading,
-						);
-						// Only redirect if the heading node actually exists in data.nodes
-						// (all injectHeadingNodesForFile calls complete before link wiring,
-						// so the target heading node is present when the source file has
-						// headings; but if the target file has no headings in its cache the
-						// node is absent — fall back to the file node).
-						if (data.nodes[headingNodeId]) {
-							linkedNodeId = headingNodeId;
-						}
+					// Only redirect if the heading node actually exists in data.nodes
+					// (all injectHeadingNodesForFile calls complete before link wiring,
+					// so the target heading node is present when the source file has
+					// headings; but if the target file has no headings in its cache the
+					// node is absent — fall back to the file node).
+					if (data.nodes[headingNodeId]) {
+						linkedNodeId = headingNodeId;
 					}
 				}
 			}
 
-			const headingId = this.buildHeadingNodeId(nodeId, owning.heading);
-			data.nodes[headingId].links[linkedNodeId] = true;
+			// For file-file mode: under-heading fragment refs produce no additional
+			// edge — the native A→B edge already captures the relationship.
+			if (isFragmentRef && !anchorSourceAtHeading && !anchorTargetAtHeading) return;
+
+			// Choose the source anchor (heading node or file node).
+			const sourceId = anchorSourceAtHeading
+				? this.buildHeadingNodeId(nodeId, owning.heading)
+				: nodeId;
+
+			data.nodes[sourceId].links[linkedNodeId] = true;
 		});
 	}
 
 	/**
 	 * Rewires native file→file edges whose source link carries a `#fragment`
-	 * that resolves to an existing heading node in the target file.
+	 * that resolves to an existing heading node in the target file, and handles
+	 * native edge removal for under-heading fragment refs when required by the
+	 * anchor mode.
 	 *
-	 * @param data   Mutable graph data object.
-	 * @param nodeId Graph node ID of the source Markdown file.
+	 * @param data                  Mutable graph data object.
+	 * @param nodeId                Graph node ID of the source Markdown file.
+	 * @param anchorSourceAtHeading Whether the source side of a fragment link is
+	 *   anchored at the heading node (`true`) or the file node (`false`). Derived
+	 *   from `settings.headingLinkAnchorMode`.
+	 * @param anchorTargetAtHeading Whether the target side of a fragment link is
+	 *   anchored at the heading node (`true`) or the file node (`false`). Derived
+	 *   from `settings.headingLinkAnchorMode`.
 	 *
 	 * @remarks
 	 * Must be called AFTER `injectHeadingNodesForFile` has run for ALL source
 	 * files so that every target heading node is already present in `data.nodes`.
 	 *
-	 * Obsidian natively records a `sourceFileNode → targetFileNode` edge for every
-	 * wikilink regardless of fragments.  When `showHeadingNodes` is active and the
-	 * referenced heading exists, the intended semantic is
-	 * `sourceFileNode → targetHeadingNode`.  This method:
+	 * Returns early without any work when both flags are `false` (file-file mode),
+	 * because the native A→B edge is the intended representation and no rewiring
+	 * is needed.
 	 *
-	 * 1. Scans all refs in `nodeId`'s source file that have no owning heading
-	 *    (i.e. they appear before the first heading — these are the native
-	 *    file-level links managed by Obsidian).
-	 * 2. For each ref with a `#fragment` (non-block) that resolves to an existing
-	 *    heading node in the target:
-	 *    a. Adds `sourceFileNode → targetHeadingNode`.
-	 *    b. Removes `sourceFileNode → targetFileNode` ONLY when no other ref from
-	 *       this source to the same target file exists without a fragment (a bare
-	 *       link to the file and a section link may legitimately coexist).
+	 * **Target-at-heading modes** (`file-heading` and `heading-heading`):
+	 * Scans file-level refs (those without an owning heading) that carry a
+	 * non-block `#fragment` resolving to an existing heading node:
+	 * - Adds `sourceFileNode → targetHeadingNode`.
+	 * - Removes `sourceFileNode → targetFileNode` ONLY when no other ref from
+	 *   this source to the same target file exists without a fragment (a bare
+	 *   link and a section link may legitimately coexist).
+	 * For `file-heading` mode (`!anchorSourceAtHeading`), under-heading fragment
+	 * refs are also scanned so the native `A→B` edge is removed when appropriate
+	 * (the `A→B#Section` edge was already added by `injectHeadingNodesForFile`).
+	 *
+	 * **Heading-file mode** (`anchorSourceAtHeading && !anchorTargetAtHeading`):
+	 * Does NOT rewire file-level refs (the native `A→B` is the correct
+	 * representation for file-level fragment refs in this mode).  However,
+	 * under-heading fragment refs were given a heading→file edge by
+	 * `injectHeadingNodesForFile`, which duplicates the native `A→B`; this pass
+	 * removes `A→B` following the same bare-link rule.
 	 *
 	 * Block-reference fragments (`^`) are excluded everywhere.
 	 */
-	private rewireFragmentLinksForFile(data: RendererData, nodeId: string): void {
+	private rewireFragmentLinksForFile(
+		data: RendererData,
+		nodeId: string,
+		anchorSourceAtHeading: boolean,
+		anchorTargetAtHeading: boolean,
+	): void {
+		// file-file: no intervention needed — the native A→B edge is sufficient.
+		if (!anchorSourceAtHeading && !anchorTargetAtHeading) return;
+
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
 		if (!file || file.extension !== "md") return;
 
@@ -588,17 +654,33 @@ export class GraphDataInjector {
 		const headings = cache.headings ?? [];
 		const refs = [...(cache.links ?? []), ...(cache.embeds ?? [])];
 
-		// Collect per-target information from all refs WITHOUT an owning heading
-		// (i.e. file-level refs handled natively by Obsidian as file→file edges).
+		// Collect per-target information for refs that this pass should handle.
 		// For each target file node ID we track:
-		//   - hasBareLink: true if at least one ref has no fragment (or a block ref ^)
-		//   - headingNodes: set of target heading node IDs from fragment refs
-		type TargetInfo = { hasBareLink: boolean; headingNodes: Set<string> };
+		//   - hasBareLink:    true when at least one processed ref has no fragment (or ^)
+		//   - hasFragmentRef: true when at least one processed fragment ref was collected
+		//                     (used to decide whether the native A→B edge should be removed)
+		//   - headingNodes:   target heading node IDs from file-level fragment refs
+		//                     (only populated when anchorTargetAtHeading is true and the
+		//                     ref has no owning heading)
+		type TargetInfo = { hasBareLink: boolean; hasFragmentRef: boolean; headingNodes: Set<string> };
 		const targets = new Map<string, TargetInfo>();
 
 		for (const ref of refs) {
 			const owning = this.findOwningHeading(headings, ref.position.start.line);
-			if (owning) continue; // handled by injectHeadingNodesForFile
+
+			// Determine whether this ref is in scope for this pass.
+			if (anchorSourceAtHeading && !anchorTargetAtHeading) {
+				// heading-file: only under-heading refs matter for native removal.
+				if (!owning) continue;
+			} else if (!anchorSourceAtHeading && anchorTargetAtHeading) {
+				// file-heading: both file-level AND under-heading refs contribute to
+				// hasBareLink tracking and native edge removal; file-level refs also
+				// add heading edges (handled below).  Under-heading heading edges were
+				// already added by injectHeadingNodesForFile, so we only need removal.
+			} else {
+				// heading-heading: only file-level refs (original behaviour).
+				if (owning) continue;
+			}
 
 			const dest = this.app.metadataCache.getFirstLinkpathDest(
 				getLinkpath(ref.link),
@@ -610,7 +692,7 @@ export class GraphDataInjector {
 			if (!targetFileNodeId || !data.nodes[targetFileNodeId]) continue;
 
 			if (!targets.has(targetFileNodeId)) {
-				targets.set(targetFileNodeId, { hasBareLink: false, headingNodes: new Set() });
+				targets.set(targetFileNodeId, { hasBareLink: false, hasFragmentRef: false, headingNodes: new Set() });
 			}
 			const info = targets.get(targetFileNodeId)!;
 
@@ -628,36 +710,51 @@ export class GraphDataInjector {
 				continue;
 			}
 
-			// Fragment ref — check whether the heading node exists in data.nodes.
-			const destCache = this.app.metadataCache.getFileCache(dest);
-			const fragmentLower = fragment.toLowerCase();
-			const matchedHeading = destCache?.headings?.find(
-				(h) => h.heading.toLowerCase() === fragmentLower,
-			);
-			if (!matchedHeading) continue;
+			if (anchorTargetAtHeading && !owning) {
+				// File-level fragment ref when target is at a heading: resolve to heading node.
+				// Only mark hasFragmentRef when the heading node actually exists — if the
+				// heading is absent, no rewiring happened and the native edge should stay.
+				// (Preserves the original heading-heading behaviour exactly.)
+				const destCache = this.app.metadataCache.getFileCache(dest);
+				const fragmentLower = fragment.toLowerCase();
+				const matchedHeading = destCache?.headings?.find(
+					(h) => h.heading.toLowerCase() === fragmentLower,
+				);
+				if (!matchedHeading) continue;
 
-			const headingNodeId = this.buildHeadingNodeId(targetFileNodeId, matchedHeading.heading);
-			if (!data.nodes[headingNodeId]) continue;
+				const headingNodeId = this.buildHeadingNodeId(targetFileNodeId, matchedHeading.heading);
+				if (!data.nodes[headingNodeId]) continue;
 
-			info.headingNodes.add(headingNodeId);
+				info.headingNodes.add(headingNodeId);
+				info.hasFragmentRef = true;
+			} else if (!anchorTargetAtHeading && owning) {
+				// heading-file, under-heading fragment ref: the heading→file edge was
+				// already added by injectHeadingNodesForFile; mark as a fragment ref so
+				// the native A→B edge is removed (unless a bare link coexists).
+				info.hasFragmentRef = true;
+			} else if (anchorTargetAtHeading && owning) {
+				// file-heading, under-heading fragment ref: the A→B#Section edge was
+				// already added by injectHeadingNodesForFile; mark as fragment ref so
+				// the native A→B edge is removed (unless a bare link coexists).
+				info.hasFragmentRef = true;
+			}
 		}
 
-		// Apply rewiring: for each target with heading refs, add the heading edges
-		// and conditionally remove the file→file edge.
+		// Apply rewiring: for each target with fragment refs, add any pending
+		// heading edges and conditionally remove the native file→file edge.
 		const sourceNode = data.nodes[nodeId];
 		if (!sourceNode) return;
 
 		for (const [targetFileNodeId, info] of targets) {
-			if (info.headingNodes.size === 0) continue;
-
-			// Add source → heading edges.
+			// Add file-level source → heading edges (only when target at heading).
 			for (const headingNodeId of info.headingNodes) {
 				sourceNode.links[headingNodeId] = true;
 			}
 
-			// Remove the native source → file edge only when there is no bare link
-			// from this source to this target file.
-			if (!info.hasBareLink) {
+			// Remove the native source → file edge only when:
+			//   - at least one fragment ref was seen (the rewiring has something to replace), and
+			//   - there is no bare link from this source to this target file.
+			if (info.hasFragmentRef && !info.hasBareLink) {
 				delete sourceNode.links[targetFileNodeId];
 			}
 		}
@@ -669,8 +766,12 @@ export class GraphDataInjector {
 	 * target file's metadata cache, and inserts a ghost heading node for each
 	 * missing heading.
 	 *
-	 * @param data   Mutable graph data object being built during this setData pass.
-	 * @param nodeId Graph node ID of the source Markdown file.
+	 * @param data                  Mutable graph data object being built during this setData pass.
+	 * @param nodeId                Graph node ID of the source Markdown file.
+	 * @param anchorTargetAtHeading When `false` (file-file or heading-file modes),
+	 *   this method returns immediately without creating any ghost nodes: the
+	 *   target side is anchored at the file and ghost heading nodes are not
+	 *   relevant. Derived from `settings.headingLinkAnchorMode`.
 	 *
 	 * @remarks
 	 * This method must be called AFTER `injectHeadingNodesForFile` for all source
@@ -698,7 +799,7 @@ export class GraphDataInjector {
 	 * // Source file "notes/index.md" contains [[guide#Installation]] but
 	 * // "docs/guide.md" has no heading "Installation":
 	 * //
-	 * // After injectGhostHeadingNodesForFile(data, "notes/index"):
+	 * // After injectGhostHeadingNodesForFile(data, "notes/index", true):
 	 * // data.nodes["docs/guide#Installation"] = { type: "f2g_heading_node", links: {} }
 	 * // data.nodes["docs/guide"].links["docs/guide#Installation"] = true
 	 * // ghostHeadingIds contains "docs/guide#Installation"
@@ -708,12 +809,19 @@ export class GraphDataInjector {
 	 * // does not exist in the vault.  Obsidian stores the unresolved node as
 	 * // e.g. "/a/b/c.md" or "/a/b/c" in data.nodes:
 	 * //
-	 * // After injectGhostHeadingNodesForFile(data, "notes/index"):
+	 * // After injectGhostHeadingNodesForFile(data, "notes/index", true):
 	 * // data.nodes["/a/b/c#missing"] = { type: "f2g_heading_node", links: {} }
 	 * // data.nodes["/a/b/c"].links["/a/b/c#missing"] = true
 	 * // ghostHeadingIds contains "/a/b/c#missing"
 	 */
-	private injectGhostHeadingNodesForFile(data: RendererData, nodeId: string): void {
+	private injectGhostHeadingNodesForFile(
+		data: RendererData,
+		nodeId: string,
+		anchorTargetAtHeading: boolean,
+	): void {
+		// file-file and heading-file: the target is anchored at the file node;
+		// ghost heading nodes are not relevant for these modes.
+		if (!anchorTargetAtHeading) return;
 		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
 		if (!file || file.extension !== "md") return;
 
