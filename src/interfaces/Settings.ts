@@ -45,4 +45,43 @@ export type Settings = {
 	 * of that so deeply nested sub-trees push the ancestor's size higher.
 	 */
 	weightNodesBySubtree: boolean;
+	/**
+	 * Controls how `folderFilterList` is applied to folder node injection.
+	 *
+	 * - `"exclude"` — all folders are injected except those covered by the list.
+	 * - `"include"` — only folders covered by the list receive injected nodes.
+	 *
+	 * Has no effect when `folderFilterList` is empty. Defaults to `"exclude"`.
+	 */
+	folderFilterMode: "include" | "exclude";
+	/**
+	 * Vault-relative folder paths used to filter folder node injection.
+	 *
+	 * @remarks
+	 * Paths are stored normalised: no leading or trailing slash, forward-slash
+	 * separator (e.g. `"work/projects"`). An entry covers its own folder and
+	 * all of its descendants recursively. An empty array disables filtering
+	 * entirely, regardless of `folderFilterMode`. Entries that do not match any
+	 * vault folder are silently ignored — no vault lookup is performed at
+	 * match time.
+	 */
+	folderFilterList: string[];
+	/**
+	 * When `true`, files that fall outside the folder filter scope are removed
+	 * from the graph entirely (along with their heading nodes and any incoming
+	 * links) instead of remaining as disconnected native nodes.
+	 *
+	 * @remarks
+	 * "Outside the filter scope" means:
+	 * - **Exclude mode** — the file lives inside a subtree covered by the list.
+	 * - **Include mode** — no entry in the list covers the file's containing
+	 *   folder.
+	 *
+	 * When `false` (default), filtered-out files stay in the graph as ordinary
+	 * Obsidian nodes; they simply receive no folder parent edge.
+	 *
+	 * Has no effect when `folderFilterList` is empty, because there is no
+	 * "outside the scope" in that case. Defaults to `false`.
+	 */
+	folderFilterHideFiles: boolean;
 };
