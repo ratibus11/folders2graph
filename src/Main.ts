@@ -164,6 +164,18 @@ export default class Folders2GraphPlugin extends Plugin {
 			},
 		});
 
+		// Mirrors the `hideRootNode` setting toggle. No default hotkey so the user
+		// must bind one deliberately.
+		this.addCommand({
+			id: "toggle-root-node",
+			name: getI18n().commands.toggleRootNode.name,
+			callback: async () => {
+				this.settings.hideRootNode = !this.settings.hideRootNode;
+				await this.saveSettings();
+				this.refreshGraphLeaves();
+			},
+		});
+
 		// Intercept folder node clicks to reveal them in the file explorer.
 		this.__interactions.wrapOpenLinkText();
 
