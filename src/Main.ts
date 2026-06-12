@@ -114,9 +114,10 @@ export default class Folders2GraphPlugin extends Plugin {
 			() => this.refreshGraphLeaves(),
 			// Arrow reads this.__injector at call time, not at construction — the
 			// injector is assigned below, after foldingManager is constructed.
-			(id) =>
-				this.__injector.getGhostFolderIds().has(id) ||
-				this.__injector.getGhostHeadingIds().has(id),
+			// allNodeIds is the post-injection pre-filter snapshot; it contains ghost
+			// folders, ghost headings, native unresolved nodes, and all other nodes
+			// present in the graph at purge time (step 4 snapshot, step 5 purge).
+			(id) => this.__injector.getAllNodeIds().has(id),
 		);
 
 		this.__injector = new GraphDataInjector(

@@ -21,7 +21,7 @@ export class FoldingManager {
 	private hierarchy: StructuralHierarchy;
 	private save: () => Promise<void>;
 	private refresh: () => void;
-	private isCurrentGhostNode: (nodeId: string) => boolean;
+	private isCurrentlyInGraph: (nodeId: string) => boolean;
 
 	/**
 	 * @param app                 Obsidian application instance, used for vault lookups in `purge`.
@@ -31,11 +31,13 @@ export class FoldingManager {
 	 *   state change.
 	 * @param refresh             Callback that re-renders all graph leaves; called after every
 	 *   state change.
-	 * @param isCurrentGhostNode  Returns `true` when a node ID belongs to a ghost folder or ghost
-	 *   heading that is **currently displayed** in the graph.  Evaluated at call time — the lambda
-	 *   reads `GraphDataInjector.getGhostFolderIds()` / `getGhostHeadingIds()` which are rebuilt
-	 *   on every `setData` pass, so the result is always up-to-date at purge time.  Used by
-	 *   `purge()` to retain fold state for ghost nodes while they are displayed.
+	 * @param isCurrentlyInGraph  Returns `true` when a node ID is **currently present** in the
+	 *   graph (post-injection, pre-filter snapshot).  Evaluated at call time — the lambda reads
+	 *   `GraphDataInjector.getAllNodeIds()` which is rebuilt on every `setData` pass before
+	 *   `purge()` is called, so the result is always up-to-date at purge time.  Used by `purge()`
+	 *   to retain fold state for any node that is currently displayed: ghost folders, ghost
+	 *   headings, native unresolved nodes, and real nodes that are temporarily hidden by settings
+	 *   toggles.
 	 */
 	constructor(
 		app: App,
@@ -43,14 +45,14 @@ export class FoldingManager {
 		hierarchy: StructuralHierarchy,
 		save: () => Promise<void>,
 		refresh: () => void,
-		isCurrentGhostNode: (nodeId: string) => boolean,
+		isCurrentlyInGraph: (nodeId: string) => boolean,
 	) {
 		this.app = app;
 		this.settings = settings;
 		this.hierarchy = hierarchy;
 		this.save = save;
 		this.refresh = refresh;
-		this.isCurrentGhostNode = isCurrentGhostNode;
+		this.isCurrentlyInGraph = isCurrentlyInGraph;
 	}
 
 	/**
@@ -148,8 +150,8 @@ export class FoldingManager {
 
 	/**
 	 * Purges stale entries from `settings.hiddenNodes` by checking each stored
-	 * node ID against the vault, while preserving the fold state of ghost nodes
-	 * that are currently displayed in the graph.
+	 * node ID against the vault and the current graph snapshot, while preserving
+	 * the fold state of any node that is currently present in the graph.
 	 *
 	 * @returns `true` if at least one entry was removed and settings must be
 	 *   saved; `false` when the map was already clean.
@@ -165,43 +167,46 @@ export class FoldingManager {
 	 * entries when `showHeadingNodes` is off, or all folder entries when
 	 * `showFolderNodes` is off.
 	 *
-	 * Ghost nodes (folder or heading nodes that exist only as virtual placeholders)
-	 * are never present in the vault, so `isNodeIdValidInVault` would always return
-	 * `false` for them, causing their fold state to be discarded on every `setData`
-	 * call. To prevent this, any entry whose ID matches a **currently displayed**
-	 * ghost node (as reported by `isCurrentGhostNode`) is exempted from purging for
-	 * as long as the ghost remains in the graph. When the backing wikilink is
-	 * removed the ghost disappears and the purge resumes for that entry on the next
-	 * pass.
+	 * An entry is removed only when BOTH conditions hold:
+	 *   1. The node ID is not valid in the vault (`isNodeIdValidInVault` returns
+	 *      `false`).
+	 *   2. The node is not currently present in the graph (`isCurrentlyInGraph`
+	 *      returns `false`).
+	 *
+	 * This two-gate design covers all node categories that can legitimately appear
+	 * in `hiddenNodes` without having a vault backing:
+	 *   - **Ghost folder / heading nodes** — virtual placeholders injected for
+	 *     wikilinks whose target path does not exist yet.
+	 *   - **Native unresolved nodes** — Obsidian's own `"unresolved"` type for
+	 *     links to non-existent files; these are present in the graph snapshot but
+	 *     are never valid in the vault.
+	 *   - **Real nodes temporarily absent** — e.g. a file hidden by the folder
+	 *     filter or a settings toggle; they remain valid in the vault so gate 1
+	 *     retains them regardless.
 	 *
 	 * Execution order guarantee: `purge()` is called at step 5 of the `setData`
-	 * override in `GraphDataInjector`, after ghost folder IDs (step 2) and ghost
-	 * heading IDs (step 3) have already been computed. The `isCurrentGhostNode`
-	 * callback therefore reads up-to-date sets when evaluated here.
+	 * override in `GraphDataInjector`, after the `allNodeIds` snapshot is taken at
+	 * step 4. The `isCurrentlyInGraph` callback therefore reads an up-to-date
+	 * snapshot when evaluated here.
 	 *
 	 * @example
-	 * // Scenario: fold a ghost folder, observe persistence across setData calls.
-	 * // 1. User Shift+clicks a ghost folder "/a/b" → hiddenNodes["/a/b/note"] = true.
-	 * // 2. On the next setData pass, "/a/b/note" is not in the vault; without the
-	 * //    ghost exemption it would be purged immediately.
-	 * // 3. isCurrentGhostNode("/a/b") returns true (ghost still displayed) → kept.
-	 * // 4. User removes the wikilink that created "/a/b" → ghost vanishes.
-	 * // 5. On the following setData pass, isCurrentGhostNode("/a/b") returns false
-	 * //    and isNodeIdValidInVault also returns false → entry is purged.
-	 *
-	 * @remarks
-	 * The fold state of a ghost node survives as long as the ghost is displayed in
-	 * the graph, but is lost when the backing wikilink is removed or when settings
-	 * are toggled in a way that removes the ghost from the graph. This is an
-	 * accepted trade-off: persisting ghost fold state to disk would require storing
-	 * IDs that are not valid vault paths, which could confuse future purge logic.
+	 * // Scenario: fold a ghost folder whose child is an unresolved node.
+	 * // 1. README.md contains [[/a/b/c.md]] → ghost folders "/a", "/a/b" and
+	 * //    unresolved node "/a/b/c.md" appear in the graph.
+	 * // 2. User Shift+clicks "/a" → hiddenNodes["/a/b"] = hiddenNodes["/a/b/c.md"] = true.
+	 * // 3. On the next setData pass:
+	 * //    - "/a/b" is not in vault AND IS in graph (ghost) → kept.
+	 * //    - "/a/b/c.md" is not in vault AND IS in graph (unresolved) → kept.
+	 * // 4. User removes the wikilink → all three nodes disappear from the graph.
+	 * // 5. On the following setData pass both gates return false → entries purged.
 	 */
 	purge(): boolean {
 		let purged = false;
 		for (const id of Object.keys(this.settings.hiddenNodes)) {
-			// Ghost nodes are not in the vault by definition, but their fold state
-			// must be preserved while they are currently displayed in the graph.
-			if (this.isCurrentGhostNode(id)) continue;
+			// Retain the entry if the node is currently present in the graph — this
+			// covers ghost folders, ghost headings, native unresolved nodes, and any
+			// real node that is temporarily hidden by a settings toggle.
+			if (this.isCurrentlyInGraph(id)) continue;
 			if (!this.isNodeIdValidInVault(id)) {
 				delete this.settings.hiddenNodes[id];
 				purged = true;
