@@ -35,11 +35,13 @@ export const enUS: I18n = {
 		},
 		folderFilterMode: {
 			name: "Folder filter mode",
-			desc: "Include: only the listed folders appear in the graph. Exclude: the listed folders are hidden from the graph. Has no effect when the filter list is empty.",
+			desc: "Include: only the listed folders appear in the graph. Exclude: the listed folders are hidden from the graph. Has no effect when the filter list is empty. (exclude by default)",
+			optionExclude: "Exclude",
+			optionInclude: "Include",
 		},
 		folderFilterList: {
 			name: "Folder filter list",
-			desc: "One vault-relative path per line. Each entry covers the folder and all of its descendants. Leading and trailing slashes are trimmed automatically. Leave empty to disable filtering.",
+			desc: "One vault-relative path per line. Each entry covers the folder and all of its descendants. Leading and trailing slashes are trimmed automatically. Leave empty to disable filtering. (empty by default)",
 		},
 	},
 	commands: {

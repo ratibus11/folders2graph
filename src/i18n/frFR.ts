@@ -34,11 +34,13 @@ export const frFR: I18n = {
 		},
 		folderFilterMode: {
 			name: "Mode de filtrage des dossiers",
-			desc: "Inclure : seuls les dossiers listés apparaissent dans le graphe. Exclure : les dossiers listés sont masqués du graphe. Sans effet si la liste de filtrage est vide.",
+			desc: "Inclure : seuls les dossiers listés apparaissent dans le graphe. Exclure : les dossiers listés sont masqués du graphe. Sans effet si la liste de filtrage est vide. (exclure par défaut)",
+			optionExclude: "Exclure",
+			optionInclude: "Inclure",
 		},
 		folderFilterList: {
 			name: "Liste de filtrage des dossiers",
-			desc: "Un chemin relatif au coffre par ligne. Chaque entrée couvre le dossier et toute sa descendance. Les slashes de début et de fin sont retirés automatiquement. Laisser vide pour désactiver le filtrage.",
+			desc: "Un chemin relatif au coffre par ligne. Chaque entrée couvre le dossier et toute sa descendance. Les slashes de début et de fin sont retirés automatiquement. Laisser vide pour désactiver le filtrage. (vide par défaut)",
 		},
 	},
 	commands: {

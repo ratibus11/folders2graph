@@ -31,6 +31,18 @@ export class SettingsTab extends PluginSettingTab {
 	}
 
 	/**
+	 * Called by Obsidian when the settings panel is closed or another tab is
+	 * selected. Cancels any pending debounce timer so it cannot fire after the
+	 * UI has been torn down.
+	 */
+	public override hide(): void {
+		if (this.__filterListRefreshTimer !== null) {
+			window.clearTimeout(this.__filterListRefreshTimer);
+			this.__filterListRefreshTimer = null;
+		}
+	}
+
+	/**
 	 * Render the settings tab in the UI.
 	 *
 	 * @remarks
@@ -39,6 +51,13 @@ export class SettingsTab extends PluginSettingTab {
 	 * scratch.
 	 */
 	public override display(): void {
+		// Cancel any timer left over from a previous display cycle; the UI is
+		// being rebuilt from scratch so a stale callback would be meaningless.
+		if (this.__filterListRefreshTimer !== null) {
+			window.clearTimeout(this.__filterListRefreshTimer);
+			this.__filterListRefreshTimer = null;
+		}
+
 		let { containerEl } = this;
 
 		containerEl.empty();
@@ -70,8 +89,8 @@ export class SettingsTab extends PluginSettingTab {
 			.setDesc(this.__i18n.settings.folderFilterMode.desc)
 			.addDropdown((component) => {
 				component
-					.addOption("exclude", "Exclude")
-					.addOption("include", "Include")
+					.addOption("exclude", this.__i18n.settings.folderFilterMode.optionExclude)
+					.addOption("include", this.__i18n.settings.folderFilterMode.optionInclude)
 					.setValue(this.__plugin.settings.folderFilterMode)
 					.onChange(async (value: string) => {
 						this.__plugin.settings.folderFilterMode = value as "include" | "exclude";
@@ -103,7 +122,9 @@ export class SettingsTab extends PluginSettingTab {
 							),
 						];
 						this.__plugin.settings.folderFilterList = normalised;
-						// Fire-and-forget save; do not await so the onChange handler stays sync.
+						// Fire-and-forget: onChange must stay synchronous (the debounce below
+						// relies on a non-async handler), and saveSettings already serialises
+						// concurrent calls internally, so skipping await here is safe.
 						void this.__plugin.saveSettings();
 						// Debounce the graph refresh to avoid reloading on every keystroke.
 						if (this.__filterListRefreshTimer !== null) {

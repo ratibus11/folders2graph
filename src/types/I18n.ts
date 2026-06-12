@@ -35,6 +35,8 @@ export type I18n = {
 		folderFilterMode: {
 			name: string;
 			desc: string;
+			optionExclude: string;
+			optionInclude: string;
 		};
 		folderFilterList: {
 			name: string;

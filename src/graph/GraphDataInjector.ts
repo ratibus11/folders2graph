@@ -213,7 +213,7 @@ export class GraphDataInjector {
 				});
 
 				// ── Phase 4 ─────────────────────────────────────────────────────
-				// Wire file→folder (and heading→folder) edges from Phase 1 mappings.
+				// Wire file→folder edges from Phase 1 mappings.
 				// Only cable when the mapped parent folder was actually created.
 
 				nodeParentMap.forEach((parentFolderId, nodeId) => {
@@ -457,15 +457,14 @@ export class GraphDataInjector {
 	 *
 	 * @param nodeId Graph node ID of the file (e.g. `"work/projects/note.md"`).
 	 * @returns Vault-relative parent folder path (e.g. `"work/projects"`), or
-	 *   `""` for files at the root level.
+	 *   `""` for files at the root level (`"/"` → `""`).
 	 *
 	 * @example
 	 * getNodeContainingFolder("work/projects/note.md"); // "work/projects"
 	 * getNodeContainingFolder("readme.md");             // ""
 	 */
 	private getNodeContainingFolder(nodeId: string): string {
-		const parts = nodeId.split("/");
-		return parts.slice(0, parts.length - 1).join("/");
+		return this.getNodeParentFolder(nodeId).slice(1);
 	}
 
 	/**
@@ -473,7 +472,11 @@ export class GraphDataInjector {
 	 * or is a descendant of one (matched by segment boundary, not substring).
 	 *
 	 * @param vaultPath Vault-relative path to test, without leading slash
-	 *   (e.g. `"work/projects"`).
+	 *   (e.g. `"work/projects"`). For a file at the vault root this value is
+	 *   `""` (the empty string, as returned by `getNodeContainingFolder`). An
+	 *   empty `vaultPath` never matches any entry because the normalisation step
+	 *   eliminates empty entries from the list — this is a deliberate correctness
+	 *   property that prevents root-level files from being inadvertently filtered.
 	 * @param list      Normalised filter list (no leading/trailing slashes).
 	 * @returns `true` when at least one entry in `list` covers `vaultPath`.
 	 *
@@ -491,6 +494,7 @@ export class GraphDataInjector {
 	 * isPathCoveredByList("work",                ["work/projects"]);  // false
 	 * isPathCoveredByList("travail",             ["tra"]);            // false
 	 * isPathCoveredByList("work",                ["work"]);           // true
+	 * isPathCoveredByList("",                    ["work"]);           // false (root file)
 	 */
 	private isPathCoveredByList(vaultPath: string, list: string[]): boolean {
 		return list.some(
