@@ -1,4 +1,4 @@
-import { App, HeadingCache, TFile, getLinkpath } from "obsidian";
+import { App, HeadingCache, TFile, TFolder, getLinkpath } from "obsidian";
 import { RendererData } from "interfaces/RendererData";
 import { LeafRenderer } from "interfaces/LeafRenderer";
 import { Settings } from "interfaces/Settings";
@@ -46,6 +46,23 @@ export class GraphDataInjector {
 	private allNodeIds: Set<string> = new Set();
 
 	/**
+	 * Folder node IDs (starting with `/`) that were injected as virtual nodes but
+	 * whose vault path does not correspond to a real `TFolder`.  Written during
+	 * Phase 2 of `setData`; cleared at the start of each pass. Read via
+	 * `getGhostFolderIds()` by `GraphInteractions` and `NodePrototypePatcher`.
+	 */
+	private ghostFolderIds: Set<string> = new Set();
+
+	/**
+	 * Heading node IDs (in the form `path#heading`) that were synthesised because
+	 * a wikilink references a heading that does not yet exist in the target file's
+	 * metadata cache.  Written during heading injection; cleared at the start of
+	 * each pass. Read via `getGhostHeadingIds()` by `GraphInteractions` and
+	 * `NodePrototypePatcher`.
+	 */
+	private ghostHeadingIds: Set<string> = new Set();
+
+	/**
 	 * @param app            Obsidian application instance.
 	 * @param settings       Plugin settings; read for feature flags and `hiddenNodes`.
 	 * @param hierarchy      Structural hierarchy; reset and rebuilt on every setData.
@@ -91,6 +108,42 @@ export class GraphDataInjector {
 	}
 
 	/**
+	 * Returns the set of injected folder node IDs that have no corresponding
+	 * real `TFolder` in the vault.
+	 *
+	 * @remarks
+	 * A ghost folder arises when a wikilink targets a path whose ancestor
+	 * directories do not exist yet (e.g. `[[/a/b/c.md]]` creates ghost folders
+	 * `/a` and `/a/b` when neither exists).  Ghost folders participate in all
+	 * normal mechanics (folding, weighting, path-filter) but render as outlined
+	 * circles instead of filled discs, and clicking them creates the vault folder.
+	 *
+	 * The set is reset at the start of every `setData` pass.
+	 */
+	getGhostFolderIds(): Set<string> {
+		return this.ghostFolderIds;
+	}
+
+	/**
+	 * Returns the set of heading node IDs that were synthesised from wikilinks
+	 * that reference a heading not present in the target file's metadata cache.
+	 *
+	 * @remarks
+	 * A ghost heading is created when a link contains a `#` fragment and the
+	 * target file exists but does not have a matching heading.  The node is
+	 * attached to the target file node (not to the source) so that clicking it
+	 * inserts the heading at the end of the target file.
+	 *
+	 * Block-reference fragments (beginning with `^`) are intentionally excluded
+	 * because they do not correspond to headings.
+	 *
+	 * The set is reset at the start of every `setData` pass.
+	 */
+	getGhostHeadingIds(): Set<string> {
+		return this.ghostHeadingIds;
+	}
+
+	/**
 	 * Installs the custom `setData` override on `renderer`. The original
 	 * `setData` is saved as `renderer.originalSetData` so it can be restored
 	 * on plugin unload.
@@ -102,11 +155,16 @@ export class GraphDataInjector {
 	 *
 	 * @remarks
 	 * The override executes in this order on every setData call:
-	 * 1. Clear `folderNodeIds` and reset the structural hierarchy.
+	 * 1. Clear `folderNodeIds`, `ghostFolderIds`, `ghostHeadingIds`, and reset
+	 *    the structural hierarchy.
 	 * 2. Inject folder nodes (when `settings.showFolderNodes` is `true`),
-	 *    including optional removal of filtered-out file nodes and their
-	 *    incoming links (when `settings.folderFilterHideFiles` is `true`).
-	 * 3. Inject heading nodes (when `settings.showHeadingNodes` is `true`).
+	 *    marking ghost folder IDs for folders that have no corresponding
+	 *    `TFolder` in the vault. Includes optional removal of filtered-out file
+	 *    nodes and their incoming links (when `settings.folderFilterHideFiles`
+	 *    is `true`).
+	 * 3. Inject real heading nodes (when `settings.showHeadingNodes` is `true`),
+	 *    then synthesise ghost heading nodes for any `#`-fragment wikilinks whose
+	 *    target heading is absent from the destination file's metadata cache.
 	 * 4. Snapshot `allNodeIds` for Shift+click validation.
 	 * 5. Purge stale `hiddenNodes` entries against the vault; save if changed.
 	 * 6. Compute the collapsed set for O(1) frame-time lookups.
@@ -127,6 +185,11 @@ export class GraphDataInjector {
 			// Clear tracked folder node IDs so a toggle-off leaves no stale
 			// entries behind that would hijack `openLinkText`.
 			this.folderNodeIds.clear();
+
+			// Clear ghost-node tracking sets from the previous pass so stale
+			// entries do not affect the current render.
+			this.ghostFolderIds.clear();
+			this.ghostHeadingIds.clear();
 
 			// Reset structural maps before (re)building them during this setData.
 			this.hierarchy.reset();
@@ -203,6 +266,19 @@ export class GraphDataInjector {
 
 				// ── Phase 2 ─────────────────────────────────────────────────────
 				// Create virtual folder nodes for every path collected in Phase 1.
+				// A folder is "ghost" when its vault path does not exist as a
+				// TFolder; the vault root is always real. Lookups are memoised
+				// inside this pass to avoid redundant vault traversals.
+				const folderExistsInVault = new Map<string, boolean>();
+				const isFolderReal = (folderId: string): boolean => {
+					if (folderId === "/") return true;
+					const cached = folderExistsInVault.get(folderId);
+					if (cached !== undefined) return cached;
+					const vaultPath = folderId.slice(1);
+					const real = this.app.vault.getAbstractFileByPath(vaultPath) instanceof TFolder;
+					folderExistsInVault.set(folderId, real);
+					return real;
+				};
 
 				foldersToCreate.forEach((folder) => {
 					data.nodes[folder] = {
@@ -211,6 +287,9 @@ export class GraphDataInjector {
 						folderNode: true,
 					};
 					this.folderNodeIds.add(folder);
+					if (!isFolderReal(folder)) {
+						this.ghostFolderIds.add(folder);
+					}
 				});
 
 				// ── Phase 3 ─────────────────────────────────────────────────────
@@ -269,6 +348,11 @@ export class GraphDataInjector {
 					return nodeData.type !== FOLDER_NODE_TAG && nodeData.type !== HEADING_NODE_TAG;
 				});
 				sourceNodeIds.forEach((nodeId) => this.injectHeadingNodesForFile(data, nodeId));
+
+				// After real headings are in place, scan every source file for links
+				// that reference a heading that is absent from the target file — those
+				// become ghost heading nodes attached to the target file node.
+				sourceNodeIds.forEach((nodeId) => this.injectGhostHeadingNodesForFile(data, nodeId));
 
 				// Heading injection attaches referenced notes via resolveGraphNodeId,
 				// whose fallback returns the destination path even when that node is
@@ -413,6 +497,99 @@ export class GraphDataInjector {
 			const headingId = this.buildHeadingNodeId(nodeId, owning.heading);
 			data.nodes[headingId].links[linkedNodeId] = true;
 		});
+	}
+
+	/**
+	 * Scans every wikilink / embed in `nodeId`'s source file for references that
+	 * contain a `#` fragment pointing to a heading that does not yet exist in the
+	 * target file's metadata cache, and inserts a ghost heading node for each
+	 * missing heading.
+	 *
+	 * @param data   Mutable graph data object being built during this setData pass.
+	 * @param nodeId Graph node ID of the source Markdown file.
+	 *
+	 * @remarks
+	 * This method must be called AFTER `injectHeadingNodesForFile` for all source
+	 * files so that real heading nodes are already in `data.nodes` when the
+	 * deduplication check runs.  If the derived ID already exists in `data.nodes`
+	 * (because the real heading injection created it), no ghost node is added.
+	 *
+	 * Block-reference fragments (beginning with `^`) are intentionally ignored:
+	 * they do not correspond to Markdown headings.
+	 *
+	 * Ghost heading nodes are attached to the TARGET file node (not the source),
+	 * registered as structural children in `StructuralHierarchy`, and recorded in
+	 * `ghostHeadingIds`.  Clicking a ghost heading in the graph will insert the
+	 * corresponding heading at the end of the target file.
+	 *
+	 * @example
+	 * // Source file "notes/index.md" contains [[guide#Installation]] but
+	 * // "docs/guide.md" has no heading "Installation":
+	 * //
+	 * // After injectGhostHeadingNodesForFile(data, "notes/index"):
+	 * // data.nodes["docs/guide#Installation"] = { type: "f2g_heading_node", links: {} }
+	 * // data.nodes["docs/guide"].links["docs/guide#Installation"] = true
+	 * // ghostHeadingIds contains "docs/guide#Installation"
+	 */
+	private injectGhostHeadingNodesForFile(data: RendererData, nodeId: string): void {
+		const file = this.app.metadataCache.getFirstLinkpathDest(nodeId, "");
+		if (!file || file.extension !== "md") return;
+
+		const cache = this.app.metadataCache.getFileCache(file);
+		if (!cache) return;
+
+		const refs = [...(cache.links ?? []), ...(cache.embeds ?? [])];
+
+		for (const ref of refs) {
+			const rawLink = ref.link;
+
+			// Only process links that contain a heading fragment.
+			const hashIdx = rawLink.indexOf("#");
+			if (hashIdx < 0) continue;
+
+			const targetPart = rawLink.slice(0, hashIdx);
+			const fragment = rawLink.slice(hashIdx + 1);
+
+			// Ignore block references — they start with `^`.
+			if (fragment.startsWith("^")) continue;
+
+			// Resolve the target file.
+			const targetFile = this.app.metadataCache.getFirstLinkpathDest(
+				getLinkpath(targetPart),
+				file.path,
+			);
+			if (!targetFile || targetFile.extension !== "md") continue;
+
+			// Determine the graph node ID for the target file.
+			const targetNodeId = this.resolveGraphNodeId(data, targetFile);
+			if (!targetNodeId || !data.nodes[targetNodeId]) continue;
+
+			// Check whether the target file already has this heading in its cache.
+			const targetCache = this.app.metadataCache.getFileCache(targetFile);
+			const existingHeadings = targetCache?.headings ?? [];
+			const headingExists = existingHeadings.some((h) => h.heading === fragment);
+			if (headingExists) continue;
+
+			// Build the ghost heading node ID.
+			const ghostId = this.buildHeadingNodeId(targetNodeId, fragment);
+
+			// Deduplicate: if the node already exists (real or another ghost from a
+			// different source file referencing the same heading), skip.
+			if (data.nodes[ghostId]) continue;
+
+			// Create the ghost heading node.
+			data.nodes[ghostId] = {
+				type: HEADING_NODE_TAG,
+				links: {},
+			};
+
+			// Attach to the target file node (structural link).
+			data.nodes[targetNodeId].links[ghostId] = true;
+			this.hierarchy.addChild(targetNodeId, ghostId);
+
+			// Record as a ghost heading.
+			this.ghostHeadingIds.add(ghostId);
+		}
 	}
 
 	/**
