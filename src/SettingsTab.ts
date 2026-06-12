@@ -17,6 +17,9 @@ export class SettingsTab extends PluginSettingTab {
 
 	private __plugin: Folders2GraphPlugin;
 
+	/** Timer handle used to debounce graph refreshes when the filter list textarea changes. */
+	private __filterListRefreshTimer: number | null = null;
+
 	/**
 	 * @param app    Obsidian application instance, forwarded to the base class.
 	 * @param plugin Plugin instance whose `settings`, `saveSettings`, and
@@ -60,6 +63,57 @@ export class SettingsTab extends PluginSettingTab {
 					await this.__plugin.saveSettings();
 					this.__plugin.refreshGraphLeaves();
 				});
+			});
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.folderFilterMode.name)
+			.setDesc(this.__i18n.settings.folderFilterMode.desc)
+			.addDropdown((component) => {
+				component
+					.addOption("exclude", "Exclude")
+					.addOption("include", "Include")
+					.setValue(this.__plugin.settings.folderFilterMode)
+					.onChange(async (value: string) => {
+						this.__plugin.settings.folderFilterMode = value as "include" | "exclude";
+						await this.__plugin.saveSettings();
+						this.__plugin.refreshGraphLeaves();
+					});
+			});
+
+		new Setting(containerEl)
+			.setName(this.__i18n.settings.folderFilterList.name)
+			.setDesc(this.__i18n.settings.folderFilterList.desc)
+			.addTextArea((component) => {
+				component
+					.setValue(this.__plugin.settings.folderFilterList.join("\n"))
+					.onChange((raw: string) => {
+						// Parse and normalise: trim, backslashes→slashes, strip leading/trailing
+						// slashes, drop empties, deduplicate.
+						const normalised = [
+							...new Set(
+								raw
+									.split("\n")
+									.map((line) =>
+										line
+											.trim()
+											.replace(/\\/g, "/")
+											.replace(/^\/+|\/+$/g, ""),
+									)
+									.filter((line) => line.length > 0),
+							),
+						];
+						this.__plugin.settings.folderFilterList = normalised;
+						// Fire-and-forget save; do not await so the onChange handler stays sync.
+						void this.__plugin.saveSettings();
+						// Debounce the graph refresh to avoid reloading on every keystroke.
+						if (this.__filterListRefreshTimer !== null) {
+							window.clearTimeout(this.__filterListRefreshTimer);
+						}
+						this.__filterListRefreshTimer = window.setTimeout(() => {
+							this.__filterListRefreshTimer = null;
+							this.__plugin.refreshGraphLeaves();
+						}, 600);
+					});
 			});
 
 		new Setting(containerEl)

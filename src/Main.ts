@@ -50,6 +50,8 @@ export default class Folders2GraphPlugin extends Plugin {
 		headingNodeColor: "#f5a55c",
 		hiddenNodes: {},
 		weightNodesBySubtree: false,
+		folderFilterMode: "exclude",
+		folderFilterList: [],
 	};
 
 	/** Serialised save queue — every `saveData` call is chained so concurrent

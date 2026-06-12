@@ -32,6 +32,14 @@ export type I18n = {
 			name: string;
 			desc: string;
 		};
+		folderFilterMode: {
+			name: string;
+			desc: string;
+		};
+		folderFilterList: {
+			name: string;
+			desc: string;
+		};
 	};
 	/** Strings used for registered Obsidian commands. */
 	commands: {

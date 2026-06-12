@@ -32,6 +32,14 @@ export const frFR: I18n = {
 			name: "Pondérer les nœuds par leur sous-arbre complet",
 			desc: "Lorsqu'activé, la taille d'un nœud reflète tous ses descendants structurels visibles — dossiers, fichiers et titres à tous les niveaux — et non seulement ses enfants directs. Les nœuds repliés redeviennent petits car leurs descendants masqués ne comptent plus. (désactivé par défaut)",
 		},
+		folderFilterMode: {
+			name: "Mode de filtrage des dossiers",
+			desc: "Inclure : seuls les dossiers listés apparaissent dans le graphe. Exclure : les dossiers listés sont masqués du graphe. Sans effet si la liste de filtrage est vide.",
+		},
+		folderFilterList: {
+			name: "Liste de filtrage des dossiers",
+			desc: "Un chemin relatif au coffre par ligne. Chaque entrée couvre le dossier et toute sa descendance. Les slashes de début et de fin sont retirés automatiquement. Laisser vide pour désactiver le filtrage.",
+		},
 	},
 	commands: {
 		toggleFolderNodes: {

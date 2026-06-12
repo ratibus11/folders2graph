@@ -33,6 +33,14 @@ export const enUS: I18n = {
 			name: "Weight nodes by full subtree",
 			desc: "When enabled, the size of a node reflects all of its visible structural descendants at every depth (folders, files, headings), not just its direct children. Folded nodes shrink because their hidden descendants no longer count. (disabled by default)",
 		},
+		folderFilterMode: {
+			name: "Folder filter mode",
+			desc: "Include: only the listed folders appear in the graph. Exclude: the listed folders are hidden from the graph. Has no effect when the filter list is empty.",
+		},
+		folderFilterList: {
+			name: "Folder filter list",
+			desc: "One vault-relative path per line. Each entry covers the folder and all of its descendants. Leading and trailing slashes are trimmed automatically. Leave empty to disable filtering.",
+		},
 	},
 	commands: {
 		toggleFolderNodes: {
