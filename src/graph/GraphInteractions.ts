@@ -35,6 +35,11 @@ export class GraphInteractions {
 	 * held). */
 	private shiftHeld = false;
 
+	/** True while the Mod key is held down (Control on Windows/Linux, Meta/Cmd
+	 * on macOS). Tracked via the same capture-phase keydown/keyup/blur handlers
+	 * as `shiftHeld`. */
+	private modHeld = false;
+
 	/** Set to `true` by the PIXI `rightdown` wrapper (in
 	 * `NodePrototypePatcher`) when it swallows a Shift+right-click with hidden
 	 * descendants, so the subsequent DOM `contextmenu` event can be suppressed
@@ -60,12 +65,15 @@ export class GraphInteractions {
 	 * `removeEventListener` on unload. */
 	private onKeyDown = (e: KeyboardEvent): void => {
 		if (e.key === "Shift") this.shiftHeld = true;
+		if (e.key === "Control" || e.key === "Meta") this.modHeld = true;
 	};
 	private onKeyUp = (e: KeyboardEvent): void => {
 		if (e.key === "Shift") this.shiftHeld = false;
+		if (e.key === "Control" || e.key === "Meta") this.modHeld = false;
 	};
 	private onBlur = (): void => {
 		this.shiftHeld = false;
+		this.modHeld = false;
 	};
 
 	/**
@@ -158,17 +166,33 @@ export class GraphInteractions {
 	/**
 	 * Wraps `workspace.openLinkText` so that clicks on folder nodes reveal the
 	 * corresponding folder in the file explorer instead of failing to resolve a
-	 * non-existent file, and so that Shift+left-click on any graph node toggles
-	 * its fold state instead of navigating.
+	 * non-existent file, so that Shift+left-click on any graph node toggles
+	 * its fold state instead of navigating, and so that Mod+left-click on a
+	 * folder node pre-fills the graph search field with a path filter for that
+	 * folder.
 	 *
 	 * @remarks
 	 * The wrapper only intercepts linktexts that match a currently-injected
 	 * folder node ID, so regular wikilink clicks are unaffected.
 	 *
-	 * The Shift+fold gate is guarded by the most recent leaf being a graph
-	 * view: clicking a graph node activates its leaf before `openLinkText`
-	 * fires, while a Shift+click on an editor wikilink keeps the editor leaf
+	 * Guard priority (highest to lowest):
+	 * 1. Shift held + graph active + any node → fold toggle.
+	 * 2. Mod held + graph active + folder node (non-root) → path-filter prefill.
+	 * 3. Folder node (any) → reveal in file explorer.
+	 * 4. All other linktexts → original `openLinkText`.
+	 *
+	 * Both gated branches require the most recent leaf to be a graph view:
+	 * clicking a graph node activates its leaf before `openLinkText` fires,
+	 * while a Shift/Mod+click on an editor wikilink keeps the editor leaf
 	 * active — so editor links are never accidentally swallowed.
+	 *
+	 * File and heading nodes are absent from `getFolderNodeIds()`, so
+	 * Mod+clicking them falls through to the original handler, preserving the
+	 * native "open in new tab" behaviour.
+	 *
+	 * The vault root node (`"/"`) is deliberately excluded from the path-filter
+	 * branch: filtering to the entire vault is a no-op, so it falls through to
+	 * the explorer-reveal branch.
 	 */
 	wrapOpenLinkText(): void {
 		const workspace = this.app.workspace;
@@ -192,6 +216,22 @@ export class GraphInteractions {
 				return Promise.resolve();
 			}
 
+			// Mod+left-click on a folder node (not the vault root) → pre-fill the
+			// graph search field with a path filter for that folder. The Shift
+			// branch above is evaluated first: Shift+Mod (fold) takes priority.
+			// File/heading node IDs are not in `getFolderNodeIds()` so they fall
+			// through to the original handler, preserving the native Mod+click
+			// behaviour (open in new tab) for those node types.
+			if (
+				this.modHeld &&
+				activeIsGraph &&
+				this.getFolderNodeIds().has(linktext) &&
+				linktext !== "/"
+			) {
+				this.applyFolderPathFilter(linktext);
+				return Promise.resolve();
+			}
+
 			if (this.getFolderNodeIds().has(linktext)) {
 				this.revealFolderInExplorer(linktext);
 				return Promise.resolve();
@@ -208,6 +248,57 @@ export class GraphInteractions {
 		if (!this.originalOpenLinkText) return;
 		this.app.workspace.openLinkText = this.originalOpenLinkText;
 		this.originalOpenLinkText = null;
+	}
+
+	/**
+	 * Pre-fills the graph search field with `path:"<vaultPath>"` for the given
+	 * folder node, applies the filter, and opens the graph controls panel so
+	 * the user can see the pre-filled field.
+	 *
+	 * @param folderNodeId A folder node ID in the form `"/path/to/folder"`.
+	 *   Must not be `"/"` (vault root) — callers are responsible for that guard.
+	 *
+	 * @remarks
+	 * **Internal API dependency.** This method relies entirely on undocumented
+	 * Obsidian internals:
+	 * - `view.dataEngine.filterOptions.search.setValue` — sets the search text.
+	 * - `view.dataEngine.updateSearch()` — reads the new value, rebuilds the
+	 *   query, and calls `onOptionsChange()`. Falls back to
+	 *   `dataEngine.requestUpdateSearch.run()` if the primary method is absent.
+	 * - `view.showSearch()` — expands the controls panel and focuses the field
+	 *   (cosmetic; called in a try/catch).
+	 *
+	 * **Fallback.** If `setValue` is unavailable the method falls back to
+	 * `revealFolderInExplorer` so the click is never silently swallowed.
+	 */
+	private applyFolderPathFilter(folderNodeId: string): void {
+		const leaf = this.app.workspace.getMostRecentLeaf() as (GraphLeafWithCustomRenderer | null);
+		const engine = leaf?.view?.dataEngine;
+		const search = engine?.filterOptions?.search;
+
+		if (!search?.setValue) {
+			// API unavailable — fall back to explorer reveal so the click is not lost.
+			this.revealFolderInExplorer(folderNodeId);
+			return;
+		}
+
+		// Folder node IDs start with "/"; strip it to get the vault-relative path.
+		const vaultPath = folderNodeId.slice(1);
+		search.setValue('path:"' + vaultPath + '"');
+
+		// Push the new value into the engine.
+		if (engine?.updateSearch) {
+			engine.updateSearch();
+		} else {
+			engine?.requestUpdateSearch?.run?.();
+		}
+
+		// Cosmetic: expand the controls panel and focus the search field.
+		try {
+			leaf?.view?.showSearch?.();
+		} catch {
+			// Ignore — purely cosmetic.
+		}
 	}
 
 	/**
