@@ -185,16 +185,20 @@ export default class Folders2GraphPlugin extends Plugin {
 		// Track Shift key state globally so we can detect Shift+click in openLinkText.
 		this.__interactions.registerKeyListeners();
 
-		// When a leaf changes, refresh all graph leaves.
+		// When a leaf changes, patch any graph leaf that has not been wrapped yet.
+		// These event-driven refreshes are NOT forced: leaves whose renderer
+		// already carries the setData wrapper are left untouched, so per-leaf view
+		// state applied right before the event (e.g. a graph bookmark restoring
+		// its saved filters via dataEngine.setOptions) is preserved.
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", (leaf: Nullable<WorkspaceLeaf>) => {
-				this.refreshGraphLeaves([leaf as GraphLeafWithCustomRenderer]);
+				this.refreshGraphLeaves([leaf as GraphLeafWithCustomRenderer], false);
 			}),
 		);
 
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => {
-				this.refreshGraphLeaves();
+				this.refreshGraphLeaves(this.__getLeavesOfTypeGraph(), false);
 			}),
 		);
 
@@ -228,7 +232,7 @@ export default class Folders2GraphPlugin extends Plugin {
 			const renderer = leaf.view.renderer;
 			if (!renderer) return;
 
-			// Restablish the original data setter in the render, then delete the custom one, then reload the leaf.
+			// Re-establish the original data setter in the renderer, then delete the custom one, then reload the leaf.
 			if (renderer.originalSetData) {
 				renderer.setData = renderer.originalSetData;
 				delete renderer.originalSetData;
@@ -236,9 +240,22 @@ export default class Folders2GraphPlugin extends Plugin {
 
 			this.__patcher.unpatch(renderer);
 
+			// Snapshot the per-leaf view options across the reload, exactly like
+			// refreshGraphLeaves does: the view's own `onload` resets them to the
+			// global graph options, which would wipe an open graph bookmark's
+			// configuration when the plugin is disabled.
+			const savedOptions = leaf.view.dataEngine?.getOptions?.();
+
 			leaf.view.unload();
 			leaf.view.load();
-			renderer.changed();
+
+			if (savedOptions !== undefined) {
+				leaf.view.dataEngine?.setOptions?.(savedOptions);
+			}
+
+			// Read the renderer from the view again: `load` may have created a
+			// fresh instance, and `changed` must run on the live one.
+			leaf.view.renderer?.changed();
 		});
 	}
 
@@ -247,6 +264,13 @@ export default class Folders2GraphPlugin extends Plugin {
 	 *
 	 * @param leaves The leaves to refresh. When omitted, all open graph leaves
 	 *   are refreshed.
+	 * @param force  When `true` (default), every ready graph leaf goes through
+	 *   the full `unload/load` cycle so Obsidian re-pushes its data through the
+	 *   custom `setData` wrapper. When `false` (event-driven refreshes), leaves
+	 *   whose renderer already carries the wrapper are skipped: the wrapper
+	 *   processes every subsequent `setData` call on its own, and skipping the
+	 *   reload preserves per-leaf view state such as the filters a graph
+	 *   bookmark just restored.
 	 *
 	 * @remarks
 	 * Non-graph leaves are silently skipped. The guard is important because the
@@ -255,23 +279,53 @@ export default class Folders2GraphPlugin extends Plugin {
 	 * (e.g. the file explorer) would rebind its internal listeners and
 	 * duplicate its context-menu handler.
 	 *
+	 * The graph view's `onload` re-applies the GLOBAL graph options
+	 * (`dataEngine.setOptions(graphPlugin.instance.options)` — verified in the
+	 * Obsidian bundle), which is what used to wipe bookmarked per-leaf options
+	 * on every reload. The full cycle therefore snapshots the view options via
+	 * `dataEngine.getOptions()` before `unload` and restores them with
+	 * `dataEngine.setOptions()` after `load` — the exact mechanism the
+	 * Bookmarks plugin itself uses to apply a saved graph configuration.
+	 *
 	 * The context-menu suppressor is installed AFTER `unload/load` because the
 	 * reload may rebuild the view's DOM, which would orphan a listener
 	 * installed before it.
 	 */
-	public refreshGraphLeaves(leaves: GraphLeafWithCustomRenderer[] = this.__getLeavesOfTypeGraph()): void {
+	public refreshGraphLeaves(
+		leaves: GraphLeafWithCustomRenderer[] = this.__getLeavesOfTypeGraph(),
+		force: boolean = true,
+	): void {
 		leaves.forEach((leaf) => {
 			// Only graph leaves with a mounted renderer should be touched. Running
 			// `view.unload(); view.load()` on a non-graph leaf (e.g. the file explorer that
 			// just became active via `active-leaf-change`) rebinds its internal listeners,
 			// duplicating its context menu handler — that's the "stacked modals" bug.
 			if (!this.__isReadyGraphLeaf(leaf)) return;
+
+			// Event-driven refresh: nothing to do when the renderer is already
+			// wrapped — and reloading would destroy per-leaf view state (e.g. the
+			// options a graph bookmark applied right before this event fired).
+			if (!force && leaf.view.renderer.originalSetData) return;
+
 			this.__injectDataInLeaf(leaf);
+
+			// Snapshot the per-leaf view options: the view's own `onload` resets
+			// them to the global graph options, which would break graph bookmarks.
+			const savedOptions = leaf.view.dataEngine?.getOptions?.();
+
 			leaf.view.unload();
 			leaf.view.load();
+
+			if (savedOptions !== undefined) {
+				leaf.view.dataEngine?.setOptions?.(savedOptions);
+			}
+
 			// Install the contextmenu suppressor AFTER unload/load — the reload may rebuild
 			// the view's DOM, which would orphan a listener installed before it.
 			this.__interactions.installContextMenuSuppressor(leaf);
+			// Still needed when `savedOptions` is undefined (no dataEngine API):
+			// `setOptions` triggers its own update, but this branch would not.
+			// Obsidian coalesces redundant render requests, so the overlap is free.
 			leaf.view.renderer.changed();
 		});
 	}
