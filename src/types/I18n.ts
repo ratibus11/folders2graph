@@ -42,6 +42,10 @@ export type I18n = {
 			name: string;
 			desc: string;
 		};
+		folderFilterHideFiles: {
+			name: string;
+			desc: string;
+		};
 	};
 	/** Strings used for registered Obsidian commands. */
 	commands: {

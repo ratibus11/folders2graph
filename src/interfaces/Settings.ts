@@ -66,4 +66,22 @@ export type Settings = {
 	 * match time.
 	 */
 	folderFilterList: string[];
+	/**
+	 * When `true`, files that fall outside the folder filter scope are removed
+	 * from the graph entirely (along with their heading nodes and any incoming
+	 * links) instead of remaining as disconnected native nodes.
+	 *
+	 * @remarks
+	 * "Outside the filter scope" means:
+	 * - **Exclude mode** — the file lives inside a subtree covered by the list.
+	 * - **Include mode** — no entry in the list covers the file's containing
+	 *   folder.
+	 *
+	 * When `false` (default), filtered-out files stay in the graph as ordinary
+	 * Obsidian nodes; they simply receive no folder parent edge.
+	 *
+	 * Has no effect when `folderFilterList` is empty, because there is no
+	 * "outside the scope" in that case. Defaults to `false`.
+	 */
+	folderFilterHideFiles: boolean;
 };

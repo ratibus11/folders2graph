@@ -42,6 +42,10 @@ export const frFR: I18n = {
 			name: "Liste de filtrage des dossiers",
 			desc: "Un chemin relatif au coffre par ligne. Chaque entrée couvre le dossier et toute sa descendance. Les slashes de début et de fin sont retirés automatiquement. Laisser vide pour désactiver le filtrage. (vide par défaut)",
 		},
+		folderFilterHideFiles: {
+			name: "Masquer les fichiers hors filtre",
+			desc: "Lorsqu'activé, les fichiers dont les dossiers sont filtrés hors du graphe disparaissent entièrement (ainsi que leurs nœuds de titre) au lieu de rester comme des nœuds natifs déconnectés. Sans effet si la liste de filtrage est vide. (désactivé par défaut)",
+		},
 	},
 	commands: {
 		toggleFolderNodes: {

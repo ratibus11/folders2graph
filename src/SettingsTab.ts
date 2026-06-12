@@ -138,6 +138,17 @@ export class SettingsTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
+			.setName(this.__i18n.settings.folderFilterHideFiles.name)
+			.setDesc(this.__i18n.settings.folderFilterHideFiles.desc)
+			.addToggle((component) => {
+				component.setValue(this.__plugin.settings.folderFilterHideFiles).onChange(async (value) => {
+					this.__plugin.settings.folderFilterHideFiles = value;
+					await this.__plugin.saveSettings();
+					this.__plugin.refreshGraphLeaves();
+				});
+			});
+
+		new Setting(containerEl)
 			.setName(this.__i18n.settings.nodeColor.name)
 			.setDesc(this.__i18n.settings.nodeColor.desc)
 			.addColorPicker((component) => {

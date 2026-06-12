@@ -52,6 +52,7 @@ export default class Folders2GraphPlugin extends Plugin {
 		weightNodesBySubtree: false,
 		folderFilterMode: "exclude",
 		folderFilterList: [],
+		folderFilterHideFiles: false,
 	};
 
 	/** Serialised save queue — every `saveData` call is chained so concurrent

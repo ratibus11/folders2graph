@@ -103,7 +103,9 @@ export class GraphDataInjector {
 	 * @remarks
 	 * The override executes in this order on every setData call:
 	 * 1. Clear `folderNodeIds` and reset the structural hierarchy.
-	 * 2. Inject folder nodes (when `settings.showFolderNodes` is `true`).
+	 * 2. Inject folder nodes (when `settings.showFolderNodes` is `true`),
+	 *    including optional removal of filtered-out file nodes and their
+	 *    incoming links (when `settings.folderFilterHideFiles` is `true`).
 	 * 3. Inject heading nodes (when `settings.showHeadingNodes` is `true`).
 	 * 4. Snapshot `allNodeIds` for Shift+click validation.
 	 * 5. Purge stale `hiddenNodes` entries against the vault; save if changed.
@@ -146,6 +148,10 @@ export class GraphDataInjector {
 				const foldersToCreate = new Set<string>();
 				foldersToCreate.add("/");
 				const nodeParentMap = new Map<string, string>();
+				// Collects file node IDs that fall outside the filter scope so they
+				// can be hidden from the graph when `settings.folderFilterHideFiles`
+				// is enabled. Only populated when `filtering` is true.
+				const filteredOutFileIds = new Set<string>();
 
 				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
 					if (nodeData.folderNode || nodeData.type === FOLDER_NODE_TAG) return;
@@ -159,7 +165,10 @@ export class GraphDataInjector {
 						// covered by the exclusion list; otherwise add only the non-covered
 						// ancestor folders.
 						const containingFolder = this.getNodeContainingFolder(nodeId);
-						if (this.isPathCoveredByList(containingFolder, filterList)) return;
+						if (this.isPathCoveredByList(containingFolder, filterList)) {
+							filteredOutFileIds.add(nodeId);
+							return;
+						}
 						this.getNodeParentFolders(nodeId)
 							.filter((f) => f === "/" || !this.isPathCoveredByList(f.slice(1), filterList))
 							.forEach((f) => foldersToCreate.add(f));
@@ -171,7 +180,10 @@ export class GraphDataInjector {
 							this.getNodeContainingFolder(nodeId),
 							filterList,
 						);
-						if (anchor === null) return;
+						if (anchor === null) {
+							filteredOutFileIds.add(nodeId);
+							return;
+						}
 						const anchorFolderId = `/${anchor}`;
 						foldersToCreate.add(anchorFolderId);
 						// Add every ancestor of the file that is at or below the anchor.
@@ -224,6 +236,25 @@ export class GraphDataInjector {
 
 				if (this.settings.hideRootNode && data.nodes["/"]) {
 					delete data.nodes["/"];
+				}
+
+				// Remove filtered-out file nodes (and their incoming links) from the
+				// graph when the user has opted in via `folderFilterHideFiles`.
+				// This runs BEFORE heading injection so the removed files never
+				// receive heading children, and before the allNodeIds snapshot so
+				// those IDs are not considered valid Shift+click targets.
+				if (this.settings.folderFilterHideFiles && filteredOutFileIds.size > 0) {
+					for (const id of filteredOutFileIds) {
+						delete data.nodes[id];
+					}
+					// Strip links pointing to removed files from every remaining node.
+					for (const nodeData of Object.values(data.nodes)) {
+						for (const targetId of Object.keys(nodeData.links)) {
+							if (filteredOutFileIds.has(targetId)) {
+								delete nodeData.links[targetId];
+							}
+						}
+					}
 				}
 			}
 

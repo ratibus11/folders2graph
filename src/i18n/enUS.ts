@@ -43,6 +43,10 @@ export const enUS: I18n = {
 			name: "Folder filter list",
 			desc: "One vault-relative path per line. Each entry covers the folder and all of its descendants. Leading and trailing slashes are trimmed automatically. Leave empty to disable filtering. (empty by default)",
 		},
+		folderFilterHideFiles: {
+			name: "Hide filtered-out files",
+			desc: "When enabled, files whose folders are filtered out of the graph disappear entirely (together with their heading nodes) instead of remaining as disconnected native nodes. Has no effect when the filter list is empty. (disabled by default)",
+		},
 	},
 	commands: {
 		toggleFolderNodes: {
