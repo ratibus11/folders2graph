@@ -379,6 +379,9 @@ export class GraphInteractions {
 			"",
 		);
 
+		// File the heading ends up in, used to wait for metadata indexing below.
+		let writtenFile: Nullable<TFile> = targetFile;
+
 		if (targetFile) {
 			// File exists — append the heading to the existing content.
 			await this.app.vault.process(targetFile, (content: string) => {
@@ -414,7 +417,7 @@ export class GraphInteractions {
 			}
 
 			try {
-				await this.app.vault.create(vaultPath, "## " + headingText + "\n");
+				writtenFile = await this.app.vault.create(vaultPath, "## " + headingText + "\n");
 			} catch {
 				// Creation failed (e.g. file appeared concurrently) — refresh anyway.
 			}
@@ -422,10 +425,74 @@ export class GraphInteractions {
 
 		this.refreshGraphLeaves();
 
-		// Mirror the classic heading-node click: now that the heading exists,
-		// let the native handler open the note at that section. The ghost ID
-		// already follows Obsidian's `path#heading` wikilink format.
-		await this.originalOpenLinkText?.(ghostHeadingId, "", false);
+		// Mirror the classic heading-node click: open the note at the freshly
+		// created section. The native `path#heading` resolution reads the
+		// metadata cache, which indexes file changes ASYNCHRONOUSLY — opening
+		// immediately would land at the top of the note without the section
+		// highlight. Wait for the cache to index the new heading first.
+		this.__openAtHeadingOnceIndexed(ghostHeadingId, writtenFile, headingText);
+	}
+
+	/**
+	 * Opens the note behind `ghostHeadingId` at its heading section once the
+	 * metadata cache has indexed the heading, so the native scroll-and-highlight
+	 * behaviour works as it does for a click on a regular heading node.
+	 *
+	 * @param ghostHeadingId Heading node ID in Obsidian's `path#heading` format,
+	 *   passed verbatim to the native `openLinkText`.
+	 * @param file           The file the heading was just written to, or `null`
+	 *   when the write failed — the note is then opened immediately, best effort.
+	 * @param headingText    Heading text to wait for (case-insensitive match).
+	 *
+	 * @remarks
+	 * The metadata cache parses modified files asynchronously: right after
+	 * `vault.process`/`vault.create` the new heading is not indexed yet, and the
+	 * native fragment resolution silently fails (the note opens at the top with
+	 * no highlight). This helper opens immediately when the heading is already
+	 * indexed, otherwise subscribes to `metadataCache.on("changed")` for the
+	 * target file, with a 2-second timeout fallback so the note always opens
+	 * even if the event never fires.
+	 */
+	private __openAtHeadingOnceIndexed(
+		ghostHeadingId: string,
+		file: Nullable<TFile>,
+		headingText: string,
+	): void {
+		const open = () => {
+			void this.originalOpenLinkText?.(ghostHeadingId, "", false);
+		};
+
+		if (!file) {
+			open();
+			return;
+		}
+
+		const wanted = headingText.toLowerCase();
+		const isIndexed = () => {
+			const headings = this.app.metadataCache.getFileCache(file)?.headings;
+			return !!headings?.some((h) => h.heading.toLowerCase() === wanted);
+		};
+
+		if (isIndexed()) {
+			open();
+			return;
+		}
+
+		let done = false;
+		const finish = () => {
+			if (done) return;
+			done = true;
+			this.app.metadataCache.offref(ref);
+			window.clearTimeout(timer);
+			open();
+		};
+
+		const ref = this.app.metadataCache.on("changed", (changed: TFile) => {
+			if (changed.path === file.path && isIndexed()) {
+				finish();
+			}
+		});
+		const timer = window.setTimeout(finish, 2000);
 	}
 
 	/**
