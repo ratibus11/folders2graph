@@ -8,6 +8,10 @@
 		"email": "ratibus11@icloud.com",
 		"url": "https://github.com/ratibus11"
 	},
+	"funding": {
+		"type": "ko-fi",
+		"url": "https://ko-fi.com/ratibus11"
+	},
 	"devDependencies": {
 		"@types/node": "^20.11.16",
 		"copy-webpack-plugin": "^12.0.2",
