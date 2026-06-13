@@ -11,6 +11,3 @@ config/.env/.env*
 
 # Extensions
 .history
-
-# Sandbox
-sandbox
