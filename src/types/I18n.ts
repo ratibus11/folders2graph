@@ -1,8 +1,84 @@
+/**
+ * Structure of the internationalisation object used throughout the plugin.
+ *
+ * @remarks
+ * Each locale module (`enUS`, `frFR`) exports a value that satisfies this type.
+ * The active locale is resolved at runtime by `getI18n` from `i18n/index.ts`.
+ */
 export type I18n = {
+	/** Strings used in the settings tab. */
 	settings: {
+		/** Section headings used to group the controls, mirroring the way
+		 * Obsidian's own settings pages are organised. */
+		sections: {
+			folders: string;
+			folderFilter: string;
+			headings: string;
+			weighting: string;
+		};
+		showFolderNodes: {
+			name: string;
+			desc: string;
+		};
 		hideRootNode: {
 			name: string;
 			desc: string;
+		};
+		nodeColor: {
+			name: string;
+			desc: string;
+		};
+		showHeadingNodes: {
+			name: string;
+			desc: string;
+		};
+		headingNodeColor: {
+			name: string;
+			desc: string;
+		};
+		headingLinkAnchorMode: {
+			name: string;
+			desc: string;
+			optionFileFile: string;
+			optionFileHeading: string;
+			optionHeadingFile: string;
+			optionHeadingHeading: string;
+		};
+		weightNodesBySubtree: {
+			name: string;
+			desc: string;
+		};
+		folderFilterMode: {
+			name: string;
+			desc: string;
+			optionExclude: string;
+			optionInclude: string;
+		};
+		folderFilterList: {
+			name: string;
+			desc: string;
+		};
+		folderFilterHideFiles: {
+			name: string;
+			desc: string;
+		};
+	};
+	/** Strings used for registered Obsidian commands. */
+	commands: {
+		toggleFolderNodes: {
+			name: string;
+		};
+		toggleHeadingNodes: {
+			name: string;
+		};
+		unfoldAllNodes: {
+			name: string;
+		};
+		toggleWeightNodesBySubtree: {
+			name: string;
+		};
+		toggleRootNode: {
+			name: string;
 		};
 	};
 };
