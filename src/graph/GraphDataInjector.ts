@@ -8,6 +8,8 @@ import { FoldingManager } from "graph/FoldingManager";
 
 const FOLDER_NODE_TAG = "f2g_node";
 const HEADING_NODE_TAG = "f2g_heading_node";
+/** Node type used by Obsidian's native graph for tag nodes (`#tag`). */
+const NATIVE_TAG_TYPE = "tag";
 
 /**
  * Injects folder nodes and heading nodes into the graph data before it is
@@ -223,6 +225,13 @@ export class GraphDataInjector {
 
 				Object.entries(data.nodes).forEach(([nodeId, nodeData]) => {
 					if (nodeData.folderNode || nodeData.type === FOLDER_NODE_TAG) return;
+
+					// Native tag nodes are not files: they have no place in the folder
+					// hierarchy. Without this guard a tag node (ID `#tag`, no slash)
+					// computes `/` as its "parent folder" and gets wired to the root
+					// node, and a nested tag (`#a/b`) even spawns a ghost folder
+					// `/#a` — neither of which reflects the vault structure.
+					if (nodeData.type === NATIVE_TAG_TYPE) return;
 
 					if (!filtering) {
 						// No filter: add all ancestor folders and map to direct parent.
