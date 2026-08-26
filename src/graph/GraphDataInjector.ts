@@ -448,6 +448,31 @@ export class GraphDataInjector {
 	}
 
 	/**
+	 * Removes wikilink syntax from heading text, preserving only the useful content.
+	 *
+	 * This handles cases where headings contain wikilinks like:
+	 * `The title [[note#heading|alias]]` → `The title alias`
+	 * `The title [[note#heading]]` → `The title heading`
+	 *
+	 * @param text Raw heading text that may contain wikilink syntax
+	 * @returns Clean heading text without markdown wikilink markers
+	 */
+	private stripWikilinksFromHeading(text: string): string {
+		return text.replace(/\[\[([^\]]*?)(?:\|([^\]]*?))?\]\]/g, (match, link, alias) => {
+			// If there's an alias, use it: [[note#heading|My Heading]] → My Heading
+			if (alias) return alias;
+
+			// If there's no alias but there's a # fragment, use only the fragment
+			// [[note#My Heading]] → My Heading
+			const hashIndex = link.indexOf("#");
+			if (hashIndex >= 0) return link.slice(hashIndex + 1);
+
+			// Fallback: use the full link text (shouldn't happen often)
+			return link;
+		});
+	}
+
+	/**
 	 * For a given source node, reads its Markdown headings and inserts a
 	 * heading node per heading, linking each link / embed found in the file
 	 * to the heading it lives under (the closest heading above it).
@@ -522,8 +547,10 @@ export class GraphDataInjector {
 		const refs = [...(cache.links ?? []), ...(cache.embeds ?? [])];
 
 		// Create one node per heading.
+		// CAMBIO 1: Limpiar sintaxis de wikilinks del texto del encabezado
 		headings.forEach((h) => {
-			const headingId = this.buildHeadingNodeId(nodeId, h.heading);
+			const cleanHeading = this.stripWikilinksFromHeading(h.heading);
+			const headingId = this.buildHeadingNodeId(nodeId, cleanHeading);
 			data.nodes[headingId] = {
 				type: HEADING_NODE_TAG,
 				links: {},
@@ -534,15 +561,17 @@ export class GraphDataInjector {
 		// preceding heading of strictly lower level. Root headings (no such
 		// ancestor) are attached to the source note. Obsidian guarantees
 		// `headings` is in document order, so a stack is enough.
+		// CAMBIO 2: Limpiar sintaxis de wikilinks cuando se construye la jerarquía
 		const ancestors: HeadingCache[] = [];
 		headings.forEach((h) => {
 			while (ancestors.length > 0 && ancestors[ancestors.length - 1].level >= h.level) {
 				ancestors.pop();
 			}
-			const headingId = this.buildHeadingNodeId(nodeId, h.heading);
+			const cleanHeading = this.stripWikilinksFromHeading(h.heading);
+			const headingId = this.buildHeadingNodeId(nodeId, cleanHeading);
 			const parent = ancestors[ancestors.length - 1];
 			const parentId = parent
-				? this.buildHeadingNodeId(nodeId, parent.heading)
+				? this.buildHeadingNodeId(nodeId, this.stripWikilinksFromHeading(parent.heading))
 				: nodeId;
 			data.nodes[parentId].links[headingId] = true;
 			// Register structural relationship (file→heading or heading→sub-heading).
@@ -560,6 +589,7 @@ export class GraphDataInjector {
 		// data.nodes when this method runs (files are processed one at a time).
 		// rewireFragmentLinksForFile runs AFTER all files' heading nodes are
 		// created and handles the heading→headingNode redirect for every ref.
+		// CAMBIO 3: Limpiar sintaxis cuando se adjunta referencias a encabezados
 		refs.forEach((ref) => {
 			const owning = this.findOwningHeading(headings, ref.position.start.line);
 			if (!owning) return;
@@ -583,8 +613,9 @@ export class GraphDataInjector {
 			if (isFragmentRef && !anchorSourceAtHeading && !anchorTargetAtHeading) return;
 
 			// Choose the source anchor (heading node or file node).
+			const cleanOwningHeading = this.stripWikilinksFromHeading(owning.heading);
 			const sourceId = anchorSourceAtHeading
-				? this.buildHeadingNodeId(nodeId, owning.heading)
+				? this.buildHeadingNodeId(nodeId, cleanOwningHeading)
 				: nodeId;
 
 			// Always wire to the target FILE node here.  rewireFragmentLinksForFile
@@ -765,9 +796,11 @@ export class GraphDataInjector {
 				if (!ghostHeadingId || !data.nodes[ghostHeadingId]) continue;
 
 				// Determine the source anchor for this ref.
+				// CAMBIO: Limpiar sintaxis de wikilinks
+				const cleanSourceHeading = owning ? this.stripWikilinksFromHeading(owning.heading) : "";
 				const sourceAnchorId =
 					anchorSourceAtHeading && owning
-						? this.buildHeadingNodeId(nodeId, owning.heading)
+						? this.buildHeadingNodeId(nodeId, cleanSourceHeading)
 						: nodeId;
 
 				const info = getOrCreateInfo(sourceAnchorId, unresolvedNodeId);
@@ -782,9 +815,11 @@ export class GraphDataInjector {
 			// Determine the source anchor for this ref.
 			// For heading-file mode, under-heading refs get a heading anchor;
 			// for file-heading mode, all refs use the file node as source anchor.
+			// CAMBIO: Limpiar sintaxis de wikilinks
+			const cleanSourceHeading = owning ? this.stripWikilinksFromHeading(owning.heading) : "";
 			const sourceAnchorId =
 				anchorSourceAtHeading && owning
-					? this.buildHeadingNodeId(nodeId, owning.heading)
+					? this.buildHeadingNodeId(nodeId, cleanSourceHeading)
 					: nodeId;
 
 			const info = getOrCreateInfo(sourceAnchorId, targetFileNodeId);
